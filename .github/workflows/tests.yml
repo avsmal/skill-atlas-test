@@ -1,0 +1,45 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    name: pytest (${{ matrix.os }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        include:
+          # macOS: case-insensitive filesystem, BSD userland
+          - os: macos-latest
+            python: "3.14"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: python -m pip install -e '.[dev]'
+
+      - name: Check fixture repo survived checkout (symlinks, CRLF)
+        run: |
+          test -L tests/fixtures/edge-repo/.claude/skills/linked/SKILL.md
+          test -L tests/fixtures/edge-repo/mirror/.claude/skills
+          grep -q $'\r' tests/fixtures/edge-repo/.claude/skills/crlf/SKILL.md
+
+      - name: Test
+        run: python -m pytest -v

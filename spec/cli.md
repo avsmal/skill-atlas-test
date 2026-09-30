@@ -269,6 +269,15 @@ scanned through `file://`. `tests/fixtures/edge-repo.expected.json` lists:
 A guard test fails if a fixture file isn't classified in that JSON. Another checks that the byte-level
 cases (CRLF, BOM, symlinks) survive: `tests/fixtures/.gitattributes` sets `-text`.
 
+### Continuous integration
+
+`.github/workflows/tests.yml` runs `pytest` on every push to `main`, on every pull request, and on demand:
+- Ubuntu with Python 3.10–3.14
+- macOS (case-insensitive filesystem) with Python 3.14
+
+Before the tests run, it checks that the fixture's symlinks and CRLF bytes survived the checkout.
+Per `AGENTS.md`, a change is done only when CI is green for its commit.
+
 ## Future work
 
 - A GitHub API backend (Trees API + raw content) for environments without git.

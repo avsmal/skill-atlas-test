@@ -1,5 +1,7 @@
 # skill-atlas
 
+[![tests](https://github.com/avsmal/skill-atlas-test/actions/workflows/tests.yml/badge.svg)](https://github.com/avsmal/skill-atlas-test/actions/workflows/tests.yml)
+
 A CLI that lists a GitHub repository's own agent skills (`SKILL.md` files under
 `.agents/skills/` and `.claude/skills/`) and saves them (repo, name, description, commit) to a local SQLite database.
 
