@@ -68,16 +68,19 @@ def render_skills(
     indent = " " * (num_w + 2)
     labels = ["description", "path"] + (["repo", "commit"] if show_source else [])
     label_w = max(map(len, labels)) + 1  # + colon
+    pad = " " * (len(indent) + label_w + 1)
 
     def field(
         label: str, value: str, *styles: str, wrap: bool = False, url: str | None = None,
     ) -> list[str]:
         head = indent + paint((label + ":").ljust(label_w), "dim") + " "
-        pad = " " * (len(indent) + label_w + 1)
         lines = textwrap.wrap(value, max(20, width - len(pad))) if wrap else [value]
         lines = lines or [""]
         first = paint.link(lines[0], url, *styles)
         return [head + first] + [pad + paint(l, *styles) for l in lines[1:]]
+
+    def path_line(s: Skill, path: str) -> str:
+        return paint.link(path, github_blob_url(s.repo, s.commit, path), "green")
 
     blocks = []
     for i, s in enumerate(skills, 1):
@@ -85,6 +88,7 @@ def render_skills(
         lines = [f"{number} {paint(s.name, 'bold', 'cyan')}"]
         lines += field("description", s.description or "—", wrap=True)
         lines += field("path", s.path, "green", url=github_blob_url(s.repo, s.commit, s.path))
+        lines += [pad + path_line(s, p) for p in s.duplicates]  # merged .claude copies (rule c)
         if show_source:
             lines += field("repo", s.repo, "blue")
             lines += field("commit", s.commit, "magenta")

@@ -12,3 +12,29 @@ def test_replace_repo_is_idempotent(tmp_path):
         st.replace_repo("r", [s1])
         assert st.list("r") == [s1]
         assert st.list() == [other, s1]
+
+
+def test_duplicates_round_trip(tmp_path):
+    s = Skill("r", "pdf", "d", "c", ".agents/skills/pdf/SKILL.md", (".claude/skills/pdf/SKILL.md",))
+    with Store(tmp_path / "db.sqlite") as st:
+        st.replace_repo("r", [s])
+    with Store(tmp_path / "db.sqlite") as st:
+        assert st.list() == [s]
+
+
+def test_old_db_gets_duplicates_column(tmp_path):
+    import sqlite3
+
+    db = tmp_path / "old.sqlite"
+    conn = sqlite3.connect(db)
+    conn.executescript("""
+        CREATE TABLE skills (repo TEXT NOT NULL, path TEXT NOT NULL, name TEXT NOT NULL, description TEXT,
+                             commit_sha TEXT NOT NULL, scanned_at TEXT NOT NULL, PRIMARY KEY (repo, path));
+        INSERT INTO skills VALUES ('r', 'a/SKILL.md', 'a', 'd', 'c', '2026-01-01T00:00:00+00:00');
+    """)
+    conn.close()
+    with Store(db) as st:
+        assert st.list() == [Skill("r", "a", "d", "c", "a/SKILL.md")]
+        dup = Skill("r", "b", "d", "c", "b/SKILL.md", ("x/SKILL.md",))
+        st.replace_repo("r", [dup])
+        assert st.list() == [dup]

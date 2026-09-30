@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import replace
 from typing import Callable
 
 from .discovery import split_skill_path
@@ -15,7 +16,7 @@ def dedupe(
 ) -> list[Skill]:
     """Drop ``.claude`` skills that share a name with a ``.agents`` skill in the same prefix.
 
-    ``read(path)`` returns a skill file's contents; when the dropped copy differs
+    The kept ``.agents`` skill lists the dropped paths in ``duplicates``. ``read(path)`` returns a skill file's contents; when the dropped copy differs
     from the kept one, ``warn`` is called. Order of the remaining skills is kept.
     """
     agents: dict[tuple, Skill] = {}
@@ -28,12 +29,13 @@ def dedupe(
             agents.setdefault(key, s)
 
     dropped: set[str] = set()
+    merged: dict[str, Skill] = {}
     for key, kept in agents.items():
-        for s in by_key[key]:
-            loc = split_skill_path(s.path)
-            if loc.agent_dir != ".claude":
-                continue
-            dropped.add(s.path)
-            if read(s.path) != read(kept.path):
-                warn(f"{s.name}: .agents and .claude copies differ; using {kept.path}")
-    return [s for s in skills if s.path not in dropped]
+        copies = [s.path for s in by_key[key] if split_skill_path(s.path).agent_dir == ".claude"]
+        for path in copies:
+            dropped.add(path)
+            if read(path) != read(kept.path):
+                warn(f"{kept.name}: .agents and .claude copies differ; using {kept.path}")
+        if copies:
+            merged[kept.path] = replace(kept, duplicates=kept.duplicates + tuple(copies))
+    return [merged.get(s.path, s) for s in skills if s.path not in dropped]

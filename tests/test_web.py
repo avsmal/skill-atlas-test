@@ -168,6 +168,8 @@ def github_repo(tmp_path, monkeypatch):
     repo = make_repo(tmp_path / "gh", {
         ".claude/skills/pdf/SKILL.md": skill_md("pdf", "Work with PDF files"),
         ".agents/skills/ünï code/SKILL.md": skill_md("uni", "Unicode path"),
+        ".agents/skills/dup/SKILL.md": skill_md("dup", "In both"),
+        ".claude/skills/dup/SKILL.md": skill_md("dup", "In both"),
     })
     monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
     monkeypatch.setenv("GIT_CONFIG_KEY_0", f"url.{repo.as_uri()}.insteadOf")
@@ -180,14 +182,22 @@ def test_paths_link_to_github(serve, github_repo):
     assert status == 200
     sha = re.search(r"@</span> <span class=\"magenta\">([0-9a-f]{12})", body).group(1)
     links = re.findall(r'<a href="([^"]+)" target="_blank" rel="noopener"><span class="green">([^<]+)</span></a>', body)
-    assert [text for _, text in links] == [".agents/skills/ünï code/SKILL.md", ".claude/skills/pdf/SKILL.md"]
+    assert [text for _, text in links] == [
+        ".agents/skills/dup/SKILL.md",
+        ".claude/skills/dup/SKILL.md",
+        ".agents/skills/ünï code/SKILL.md",
+        ".claude/skills/pdf/SKILL.md",
+    ]
     for href, _ in links:
         assert re.fullmatch(r"https://github\.com/o/r/blob/[0-9a-f]{40}/\S+", href)
         assert href.split("/")[6].startswith(sha)
-    assert links[0][0].endswith("/.agents/skills/%C3%BCn%C3%AF%20code/SKILL.md")
-    assert links[1][0].endswith("/.claude/skills/pdf/SKILL.md")
+    assert links[1][0].endswith("/.claude/skills/dup/SKILL.md")
+    assert links[2][0].endswith("/.agents/skills/%C3%BCn%C3%AF%20code/SKILL.md")
+    assert links[3][0].endswith("/.claude/skills/pdf/SKILL.md")
     # link text leaves the plain-text output unchanged
-    assert "   path:        .claude/skills/pdf/SKILL.md" in output_text(body)
+    text = output_text(body)
+    assert "   path:        .claude/skills/pdf/SKILL.md" in text
+    assert "   path:        .agents/skills/dup/SKILL.md\n                .claude/skills/dup/SKILL.md\n" in text
 
 
 def test_non_github_paths_are_not_links(serve, fixture_repo):

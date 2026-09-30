@@ -59,3 +59,32 @@ def test_list_shows_repo_and_commit(fixture_repo, tmp_path, capsys):
     assert main(["list", "--color", "never", "--db", db]) == 0
     out = capsys.readouterr().out
     assert f"   repo:        {url}\n   commit:      {commit}" in out
+
+
+def test_duplicated_skill_shows_all_paths(tmp_path, capsys):
+    from conftest import make_repo, skill_md
+
+    repo = make_repo(tmp_path / "dup", {
+        ".agents/skills/pdf/SKILL.md": skill_md("pdf", "Work with PDF files"),
+        ".claude/skills/pdf/SKILL.md": skill_md("pdf", "Work with PDF files"),
+    })
+    url, db = repo.as_uri(), str(tmp_path / "db")
+    assert main(["scan", url, "--color", "never", "--db", db]) == 0
+    assert (
+        "1. pdf\n   description: Work with PDF files\n"
+        "   path:        .agents/skills/pdf/SKILL.md\n"
+        "                .claude/skills/pdf/SKILL.md\n\n1 skill(s) found"
+    ) in capsys.readouterr().out
+
+    assert main(["scan", url, "--json", "--no-store", "--db", db]) == 0
+    [skill] = json.loads(capsys.readouterr().out)
+    assert skill["path"] == ".agents/skills/pdf/SKILL.md"
+    assert skill["duplicates"] == [".claude/skills/pdf/SKILL.md"]
+
+    assert main(["list", "--color", "never", "--db", db]) == 0
+    assert (
+        "   path:        .agents/skills/pdf/SKILL.md\n"
+        "                .claude/skills/pdf/SKILL.md\n   repo:"
+    ) in capsys.readouterr().out
+    assert main(["list", "--json", "--db", db]) == 0
+    assert json.loads(capsys.readouterr().out)[0]["duplicates"] == [".claude/skills/pdf/SKILL.md"]

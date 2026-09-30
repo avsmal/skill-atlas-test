@@ -59,3 +59,19 @@ def test_warns_when_contents_differ():
 def test_duplicates_within_one_agent_dir_are_kept():
     paths, _ = run([_s(".claude/skills/a/SKILL.md", "x"), _s(".claude/skills/b/SKILL.md", "x")])
     assert len(paths) == 2
+
+
+def test_kept_skill_lists_merged_paths():
+    out = dedupe(
+        [
+            _s(".agents/skills/pdf/SKILL.md", "pdf"),
+            _s(".claude/skills/pdf/SKILL.md", "pdf"),
+            _s(".claude/skills/pdf-copy/SKILL.md", "pdf"),
+            _s("backend/.claude/skills/pdf/SKILL.md", "pdf"),
+        ],
+        read=lambda p: b"same", warn=lambda m: None,
+    )
+    assert [(s.path, s.duplicates) for s in out] == [
+        (".agents/skills/pdf/SKILL.md", (".claude/skills/pdf/SKILL.md", ".claude/skills/pdf-copy/SKILL.md")),
+        ("backend/.claude/skills/pdf/SKILL.md", ()),
+    ]

@@ -1,6 +1,7 @@
 """SQLite persistence for discovered skills."""
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 from datetime import datetime, timezone
@@ -15,6 +16,7 @@ CREATE TABLE IF NOT EXISTS skills (
     name        TEXT NOT NULL,
     description TEXT,
     commit_sha  TEXT NOT NULL,
+    duplicates  TEXT NOT NULL DEFAULT '[]',
     scanned_at  TEXT NOT NULL,
     PRIMARY KEY (repo, path)
 );
@@ -34,6 +36,10 @@ class Store:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(self.path)
         self.conn.executescript(_SCHEMA)
+        columns = {row[1] for row in self.conn.execute("PRAGMA table_info(skills)")}
+        if "duplicates" not in columns:  # DB created before the column existed
+            with self.conn:
+                self.conn.execute("ALTER TABLE skills ADD COLUMN duplicates TEXT NOT NULL DEFAULT '[]'")
 
     def close(self) -> None:
         self.conn.close()
@@ -50,16 +56,22 @@ class Store:
         with self.conn:
             self.conn.execute("DELETE FROM skills WHERE repo = ?", (repo,))
             self.conn.executemany(
-                "INSERT INTO skills (repo, path, name, description, commit_sha, scanned_at)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
-                [(s.repo, s.path, s.name, s.description, s.commit, now) for s in skills],
+                "INSERT INTO skills (repo, path, name, description, commit_sha, duplicates, scanned_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (s.repo, s.path, s.name, s.description, s.commit, json.dumps(list(s.duplicates)), now)
+                    for s in skills
+                ],
             )
 
     def list(self, repo: str | None = None) -> list[Skill]:
-        sql = "SELECT repo, name, description, commit_sha, path FROM skills"
+        sql = "SELECT repo, name, description, commit_sha, path, duplicates FROM skills"
         params: tuple = ()
         if repo:
             sql += " WHERE repo = ?"
             params = (repo,)
         sql += " ORDER BY repo, path"
-        return [Skill(*row) for row in self.conn.execute(sql, params)]
+        return [
+            Skill(*row[:5], tuple(json.loads(row[5])))
+            for row in self.conn.execute(sql, params)
+        ]

@@ -26,3 +26,11 @@ def test_render_wraps_description_and_pads_numbers():
     assert all(len(l) <= 60 for l in lines)
     assert lines[2].startswith(" " * 17 + "word")  # wrapped continuation aligned with value
     assert "10. s9" in out
+
+
+def test_render_lists_duplicate_paths_aligned():
+    s = Skill("r", "pdf", "d", "c", ".agents/skills/pdf/SKILL.md", (".claude/skills/pdf/SKILL.md",))
+    assert render_skills([s], Painter(False)).splitlines()[2:] == [
+        "   path:        .agents/skills/pdf/SKILL.md",
+        "                .claude/skills/pdf/SKILL.md",
+    ]

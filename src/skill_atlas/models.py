@@ -10,6 +10,8 @@ class Skill:
     description: str
     commit: str
     path: str
+    # paths of .claude copies merged into this skill by rule (c), in path order
+    duplicates: tuple[str, ...] = ()
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        return {**asdict(self), "duplicates": list(self.duplicates)}

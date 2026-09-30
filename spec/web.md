@@ -65,12 +65,13 @@ https://github.com/o/r @ c823f9e564fd
 - Colors are the CLI's colors, rendered as `<span class="…">` elements whose classes are the
   style names from `output.py` (`bold`, `dim`, `yellow`, `cyan`, `green`, `blue`, `magenta`, `red`).
   The page's CSS maps them to the palette of a dark terminal.
+- Duplicated skills show all their paths, as in the CLI (see *Output format* in [cli.md](cli.md)).
 - Each skill's **path is a link to the file on GitHub**, pinned to the scanned commit:
   `https://github.com/<owner>/<name>/blob/<full commit SHA>/<path>`, with the path percent-encoded
   per segment (`/` kept). Links open in a new tab (`target="_blank" rel="noopener"`).
   Only repositories that normalize to `https://github.com/<owner>/<name>` get links; for any other
   URL (e.g. `file://` with `--allow-local`) the path stays plain text. The link text is the path
-  itself, so the `<pre>` text is unchanged.
+  itself, so the `<pre>` text is unchanged. Every path is linked, including the paths of duplicates.
 - All text taken from the repository (names, descriptions, paths) and from the input is HTML-escaped.
 
 While a scan is running, the button shows *Scanning…* and is disabled.
@@ -108,7 +109,8 @@ row of the *HTTP interface* table, plus:
 - a skill whose name/description contains `<script>` is escaped, and so is the echoed input
 - paths link to `https://github.com/o/r/blob/<sha>/<path>` for a GitHub URL (the clone is
   redirected to the local fixture with git's `url.<base>.insteadOf`, so no network is used),
-  non-ASCII paths are percent-encoded, and `file://` repos get no links
+  non-ASCII paths are percent-encoded, a duplicated skill shows and links both of its paths,
+  and `file://` repos get no links
 - color spans are present (`<span class="bold cyan">`)
 - without `allow_local`, `file://`, non-GitHub `git@` and `-`-prefixed input get `400` and nothing is stored
 - results are stored in the DB, and not stored with `store=False`
