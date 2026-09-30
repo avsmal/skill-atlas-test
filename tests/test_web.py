@@ -160,3 +160,37 @@ def test_serve_cli_args():
 
     args = build_parser().parse_args(["serve", "--port", "0", "--no-store", "--allow-local"])
     assert (args.host, args.port, args.no_store, args.allow_local) == ("127.0.0.1", 0, True, True)
+
+
+@pytest.fixture
+def github_repo(tmp_path, monkeypatch):
+    """A local repo that git clones in place of ``https://github.com/o/r`` (url.insteadOf)."""
+    repo = make_repo(tmp_path / "gh", {
+        ".claude/skills/pdf/SKILL.md": skill_md("pdf", "Work with PDF files"),
+        ".agents/skills/ünï code/SKILL.md": skill_md("uni", "Unicode path"),
+    })
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", f"url.{repo.as_uri()}.insteadOf")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "https://github.com/o/r")
+    return "https://github.com/o/r"
+
+
+def test_paths_link_to_github(serve, github_repo):
+    status, body = serve(allow_local=False)(scan_url("o/r"))
+    assert status == 200
+    sha = re.search(r"@</span> <span class=\"magenta\">([0-9a-f]{12})", body).group(1)
+    links = re.findall(r'<a href="([^"]+)" target="_blank" rel="noopener"><span class="green">([^<]+)</span></a>', body)
+    assert [text for _, text in links] == [".agents/skills/ünï code/SKILL.md", ".claude/skills/pdf/SKILL.md"]
+    for href, _ in links:
+        assert re.fullmatch(r"https://github\.com/o/r/blob/[0-9a-f]{40}/\S+", href)
+        assert href.split("/")[6].startswith(sha)
+    assert links[0][0].endswith("/.agents/skills/%C3%BCn%C3%AF%20code/SKILL.md")
+    assert links[1][0].endswith("/.claude/skills/pdf/SKILL.md")
+    # link text leaves the plain-text output unchanged
+    assert "   path:        .claude/skills/pdf/SKILL.md" in output_text(body)
+
+
+def test_non_github_paths_are_not_links(serve, fixture_repo):
+    _, body = serve()(scan_url(fixture_repo.as_uri()))
+    assert "<a href" not in body
+    assert '<span class="green">.claude/skills/pdf/SKILL.md</span>' in body

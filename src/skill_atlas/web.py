@@ -32,6 +32,12 @@ class HtmlPainter(Painter):
             return text
         return f'<span class="{" ".join(styles)}">{text}</span>'
 
+    def link(self, text: str, url: str | None, *styles: str) -> str:
+        inner = self(text, *styles)
+        if not url:
+            return inner
+        return f'<a href="{html.escape(url)}" target="_blank" rel="noopener">{inner}</a>'
+
 
 def run_scan(repo_input: str, db: Path, *, store: bool, allow_local: bool) -> tuple[HTTPStatus, str]:
     """Scan ``repo_input``; return the status and the HTML for the ``<pre>`` block."""
@@ -134,6 +140,9 @@ _PAGE = """<!doctype html>
   .output { margin: 20px 0 0; padding: 16px; overflow-x: auto; border-radius: 8px;
             background: var(--term-bg); color: var(--term-fg);
             font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .output a { color: inherit; text-decoration: underline; text-decoration-color: rgba(158,206,106,.4);
+              text-underline-offset: 2px; }
+  .output a:hover { text-decoration-color: currentColor; }
   .bold { font-weight: 700; } .dim { opacity: .6; }
   .red { color: #f7768e; } .green { color: #9ece6a; } .yellow { color: #e0af68; }
   .blue { color: #7aa2f7; } .magenta { color: #bb9af7; } .cyan { color: #7dcfff; }
