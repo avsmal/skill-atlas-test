@@ -15,6 +15,6 @@
 - New `repos` table so 0-skill scans are recorded; backfilled from `skills` on open.
   `Store.replace_repo(repo, skills, commit=None)`.
 - Design: top bar, terminal-style output panel (always dark) with the equivalent command and a
-  Copy button, light/dark via `prefers-color-scheme`, mobile layout, loading state, `/` focuses input.
+  Copy button, mobile layout, loading state, `/` focuses input.
 - Everything inline, no external requests, no new dependencies; works without JavaScript.
 - The "exactly one `<input>` per page" rule was kept here, so no catalogue filter (relaxed in PR #6).

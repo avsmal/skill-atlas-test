@@ -488,3 +488,15 @@ def test_every_page_has_the_repo_input_and_a_filter_only_with_skills(serve, fixt
         # no external assets: scripts, styles and the icon are inline
         assert not re.search(r"<script[^>]+src=|<link[^>]+stylesheet", body), path
         assert re.findall(r'<link rel="icon" href="([^"]{5})', body) == ["data:"], path
+
+
+def test_background_is_dark_green_in_every_theme(serve, fixture_repo, tmp_path):
+    get = serve()
+    get(scan_url(fixture_repo.as_uri()))
+    for path in ["/", scan_url(fixture_repo.as_uri()), stored_url(fixture_repo.as_uri()), "/nope"]:
+        _, body = get(path)
+        css = re.search(r"<style>(.*?)</style>", body, re.S).group(1)
+        assert "--bg: #0f2a1d;" in css
+        assert "color-scheme: dark;" in css
+        assert "prefers-color-scheme" not in css
+        assert re.search(r"body \{[^}]*background: var\(--bg\)", css)
