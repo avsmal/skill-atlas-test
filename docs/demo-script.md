@@ -6,7 +6,8 @@ catalogue and give cross-repository *Similar skills* hits.
 
 A 30-second silent cut is recorded in [demo.mp4](demo.mp4): scan ideavim, filter `commit`,
 scan kotlin, catalogue, stored ideavim, Similar to `extensions-api-migration`, install card.
-It was recorded with Playwright from a fresh DB, with the clone waits trimmed.
+It was recorded with Playwright from a fresh DB, with the clone waits trimmed; to re-record it or
+make another cut, use the [`record-demo` skill](../.claude/skills/record-demo/SKILL.md).
 
 Values below come from a dry run on 2026-09-30 (ideavim `7bd8f1315c8a`, kotlin `d3c2339829f4`,
 skill-atlas-test `2599d58c5d2a`). Repositories change: re-run the dry run before recording and
