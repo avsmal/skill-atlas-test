@@ -5,7 +5,7 @@ import os
 import shutil
 import sys
 import textwrap
-from typing import TextIO
+from typing import Callable, TextIO
 
 from .models import Skill
 from .repo import github_blob_url
@@ -56,11 +56,15 @@ def render_skills(
     *,
     show_source: bool = False,
     width: int | None = None,
+    wrap: Callable[[Skill, str], str] | None = None,
 ) -> str:
     """Numbered entries, one field per line; long descriptions are wrapped.
 
     ``show_source`` adds the repo and commit lines (used by ``list``, where
     entries may come from several repositories).
+
+    ``wrap``, if given, wraps each skill's rendered block (used by the web UI to
+    attach a searchable container around it without changing the plain text).
     """
     if width is None:
         width = shutil.get_terminal_size((100, 24)).columns
@@ -93,18 +97,30 @@ def render_skills(
             lines += field("repo", s.repo, "blue")
             lines += field("commit", s.commit, "magenta")
         blocks.append("\n".join(lines))
-    return "\n\n".join(blocks)
+    if wrap is None:
+        return "\n\n".join(blocks)
+    last = len(blocks) - 1
+    return "".join(
+        wrap(s, block if i == last else block + "\n\n")
+        for i, (s, block) in enumerate(zip(skills, blocks))
+    )
 
 
 def render_header(repo: str, commit: str, paint: Painter) -> str:
     return f"{paint(repo, 'bold', 'blue')} {paint('@', 'dim')} {paint(commit[:12], 'magenta')}"
 
 
-def render_list(skills: list[Skill], paint: Painter, *, width: int | None = None) -> str:
+def render_list(
+    skills: list[Skill],
+    paint: Painter,
+    *,
+    width: int | None = None,
+    wrap: Callable[[Skill, str], str] | None = None,
+) -> str:
     """What ``skill-atlas list`` prints: entries with their repo and commit, then a summary."""
     if not skills:
         return paint("No skills stored", "yellow")
-    entries = render_skills(skills, paint, show_source=True, width=width)
+    entries = render_skills(skills, paint, show_source=True, width=width, wrap=wrap)
     return f"{entries}\n\n{paint(f'{len(skills)} skill(s) stored', 'bold', 'green')}"
 
 
