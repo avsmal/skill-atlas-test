@@ -12,4 +12,5 @@ this folder records *why* and *what was asked*.
 The folder listing is the index (sorted by time); there is deliberately no table here, so
 parallel PRs don't conflict.
 
-When a new task ends in a PR, add a file here in the same format (see `AGENTS.md` › *Shared memory*).
+When a new task ends in a PR, add a file here in the same format (see `AGENTS.md` › *Shared memory*
+and the step-by-step skill [`.claude/skills/shared-memory`](../.claude/skills/shared-memory/SKILL.md)).
