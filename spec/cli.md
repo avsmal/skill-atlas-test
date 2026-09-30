@@ -303,7 +303,7 @@ cases (CRLF, BOM, symlinks) survive: `tests/fixtures/.gitattributes` sets `-text
 ### Continuous integration
 
 `.github/workflows/tests.yml` runs `pytest` on every push to `main`, on every pull request, and on demand:
-- Ubuntu with Python 3.10–3.14
+- Ubuntu with Python 3.14
 - macOS (case-insensitive filesystem) with Python 3.14
 
 Before the tests run, it checks that the fixture's symlinks and CRLF bytes survived the checkout.
