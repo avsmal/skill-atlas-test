@@ -127,7 +127,7 @@ class Demo:
         self.page.keyboard.type(text, delay=self.type_delay if delay is None else delay)
 
     def clear_field(self):
-        self.page.keyboard.press("Meta+A"); self.page.keyboard.press("Backspace")
+        self.page.keyboard.press("ControlOrMeta+A"); self.page.keyboard.press("Backspace")
 
     def scan(self, repo: str, *, via_slash: bool = False):
         """Type a repo into the scan form and submit; the clone wait is trimmed later."""
