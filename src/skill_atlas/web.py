@@ -35,11 +35,12 @@ class HtmlPainter(Painter):
             return text
         return f'<span class="{" ".join(styles)}">{text}</span>'
 
-    def link(self, text: str, url: str | None, *styles: str) -> str:
+    def link(self, text: str, url: str | None, *styles: str, external: bool = True) -> str:
         inner = self(text, *styles)
         if not url:
             return inner
-        return f'<a href="{html.escape(url)}" target="_blank" rel="noopener">{inner}</a>'
+        target = ' target="_blank" rel="noopener"' if external else ""
+        return f'<a href="{html.escape(url)}"{target}>{inner}</a>'
 
 
 # --- Output (the <pre> text, identical to the CLI) -------------------------------------
@@ -232,23 +233,7 @@ def render_scan(repo_input: str, status: HTTPStatus, output: str, *, repo_count:
     return _layout(title, body, repo_count=repo_count)
 
 
-def _skills_index(skills: list[Skill]) -> str:
-    """The per-skill "Similar skills" links, outside the output panel (see spec/web.md)."""
-    if not skills:
-        return ""
-    rows = "".join(f"""<li><a class="repo" href="{e(similar_url(s.repo, s.path))}">
-    <span class="repo__title"><span class="repo__name">{e(s.name)}</span></span>
-    <span class="repo__meta">Similar skills</span>
-  </a></li>""" for s in skills)
-    return f"""<section class="skills-index">
-  <div class="section-head"><h2>Skills</h2></div>
-  <ul class="repo-list">
-  {rows}
-  </ul>
-</section>"""
-
-
-def render_stored(entry: RepoEntry, skills: list[Skill], output: str, *, repo_count: int) -> str:
+def render_stored(entry: RepoEntry, output: str, *, repo_count: int) -> str:
     shown = display_repo(entry.repo)
     github = (
         f'<a class="btn btn--ghost" href="{e(entry.repo)}" target="_blank" rel="noopener">View on GitHub</a>'
@@ -270,8 +255,7 @@ def render_stored(entry: RepoEntry, skills: list[Skill], output: str, *, repo_co
     </div>
   </div>
 </section>
-{_terminal(f"skill-atlas list --repo {shlex.quote(entry.repo)}", output)}
-{_skills_index(skills)}"""
+{_terminal(f"skill-atlas list --repo {shlex.quote(entry.repo)}", output)}"""
     return _layout(f"{shown} · skill-atlas", body, repo_count=repo_count)
 
 
@@ -361,8 +345,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         with Store(self.db) as s:
             skills = s.list(repo)
-        output = render_list(skills, HtmlPainter(), width=WIDTH)
-        self._send(HTTPStatus.OK, render_stored(entry, skills, output, repo_count=len(entries)))
+        output = render_list(skills, HtmlPainter(), width=WIDTH, name_url=lambda sk: similar_url(sk.repo, sk.path))
+        self._send(HTTPStatus.OK, render_stored(entry, output, repo_count=len(entries)))
 
     def _similar(self, repo_input: str, path: str) -> None:
         entries = self._repos()
@@ -564,7 +548,7 @@ main.wrap { padding-top: 32px; padding-bottom: 48px; }
 .facts code { color: var(--text); }
 .actions { display: flex; gap: 8px; }
 
-.skills-index, .similar { margin-top: 32px; }
+.similar { margin-top: 32px; }
 
 .footer { margin: 0; color: var(--muted); font-size: 13px; padding: 20px 0 32px; border-top: 1px solid var(--border); }
 

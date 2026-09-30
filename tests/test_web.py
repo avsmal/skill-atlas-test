@@ -310,17 +310,17 @@ def test_stored_zero_skill_repo(serve, tmp_path):
     status, body = serve()("/stored?repo=o/empty")
     assert status == 200
     assert output_text(body) == "No skills stored"
-    assert "Similar skills" not in body  # no skills, so no skills index
+    assert "/similar?" not in body  # no skills, so nothing to link
 
 
-def test_stored_page_links_to_similar_skills(serve, tmp_path):
+def test_stored_page_links_names_to_similar_skills(serve, tmp_path):
     seed(tmp_path / "web.db", "https://github.com/o/r", ["pdf", "review"], "a" * 40, "2026-01-01T00:00:00+00:00")
     _, body = serve()("/stored?repo=o/r")
     for name, path in [("pdf", ".claude/skills/pdf/SKILL.md"), ("review", ".claude/skills/review/SKILL.md")]:
         href = html.escape(similar_url("https://github.com/o/r", path))
-        assert f'href="{href}"' in body
-        assert f'<span class="repo__name">{name}</span>' in body
-    assert body.count("Similar skills") == 2
+        assert f'<a href="{href}"><span class="bold cyan">{name}</span></a>' in body
+    # the linked name is still the same plain text as the CLI output — no separate list
+    assert output_text(body).count("Similar skills") == 0
 
 
 def test_stored_unknown_repo_is_404(serve, tmp_path):

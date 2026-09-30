@@ -89,10 +89,10 @@ and a *View on GitHub* link for GitHub repositories), a **Rescan** link to
 `/?repo=<repo>`, and an output panel whose text is exactly what
 `skill-atlas list --repo <repo> --color never` prints. The title bar shows that command.
 
-Below the output panel, when the repository has at least one skill, a **Skills** list repeats
-each stored skill by name with a **Similar skills** link to
-`/similar?repo=<repo>&path=<path of that skill>`. This list is separate from the output panel
-so the panel's text keeps matching the CLI exactly (see *Output*).
+Each skill's **name**, in the output panel, links to
+`/similar?repo=<repo>&path=<path of that skill>` — see *Similar skills* below. Unlike the path's
+GitHub link, this is an in-app link, so it opens in the same tab. There is no separate list: the
+link is part of the same output panel, whose text keeps matching the CLI exactly (see *Output*).
 
 ### Similar skills (`/similar?repo=<repo>&path=<path>`)
 
@@ -144,6 +144,9 @@ https://github.com/o/r @ c823f9e564fd
   Only repositories that normalize to `https://github.com/<owner>/<name>` get links; for any other
   URL (e.g. `file://` with `--allow-local`) the path stays plain text. The link text is the path
   itself, so the `<pre>` text is unchanged. Every path is linked, including the paths of duplicates.
+- On the stored-repository page only, each skill's **name is a link to its Similar skills page**
+  (see below), the same way: the link text is just the name, so the `<pre>` text is unchanged.
+  Unlike the path's GitHub link, it's an in-app link and doesn't open in a new tab.
 - All text taken from the repository (names, descriptions, paths), from the DB, and from the input is HTML-escaped.
 
 While a scan is running, the button shows *Scanning…* and is disabled.
@@ -219,7 +222,8 @@ row of the *HTTP interface* table, plus:
   `--no-store` note; escapes stored text; the top bar shows the repository count
 - `/stored?repo=`: accepts the same input forms as scan; its `<pre>` text equals
   `skill-atlas list --repo <repo> --color never`; `404` for unknown or missing `repo`; links to rescan
-- `/stored?repo=`: each stored skill has a **Similar skills** link to `/similar?repo=&path=`, outside the `<pre>`
+- `/stored?repo=`: each skill's name, inside the `<pre>`, links to `/similar?repo=&path=` (in the same
+  tab, unlike the path's GitHub link), and the `<pre>` text is unaffected once tags are stripped
 - `/similar?repo=&path=`: results above 10% shown with name and one-decimal percentage, sorted descending;
   the target skill itself and skills at or below 10% are excluded; `404` for an unknown repo, an unknown path,
   or a missing parameter; links back to the skill's own repository and to each result's repository
