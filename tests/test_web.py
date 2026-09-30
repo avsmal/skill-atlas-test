@@ -50,6 +50,14 @@ def scan_url(repo: str) -> str:
     return "/?repo=" + quote(repo, safe="")
 
 
+def stored_url(repo: str) -> str:
+    return "/stored?repo=" + quote(repo, safe="")
+
+
+def similar_url(repo: str, path: str) -> str:
+    return f"/similar?repo={quote(repo, safe='')}&path={quote(path, safe='')}"
+
+
 def test_index_has_one_input_and_no_output(serve):
     status, body = serve()("/")
     assert status == 200
@@ -330,7 +338,18 @@ def test_stored_zero_skill_repo(serve, tmp_path):
     status, body = serve()("/stored?repo=o/empty")
     assert status == 200
     assert output_text(body) == "No skills stored"
+    assert "/similar?" not in body  # no skills, so nothing to link
     assert '<input type="search"' not in body  # nothing to filter
+
+
+def test_stored_page_links_names_to_similar_skills(serve, tmp_path):
+    seed(tmp_path / "web.db", "https://github.com/o/r", ["pdf", "review"], "a" * 40, "2026-01-01T00:00:00+00:00")
+    _, body = serve()("/stored?repo=o/r")
+    for name, path in [("pdf", ".claude/skills/pdf/SKILL.md"), ("review", ".claude/skills/review/SKILL.md")]:
+        href = html.escape(similar_url("https://github.com/o/r", path))
+        assert f'<a href="{href}"><span class="bold cyan">{name}</span></a>' in body
+    # the linked name is still the same plain text as the CLI output — no separate list
+    assert output_text(body).count("Similar skills") == 0
 
 
 def test_stored_skill_filter_present(serve, fixture_repo):
@@ -357,6 +376,89 @@ def test_stored_without_repo_is_404(serve, path):
     assert "No repository given." in body
 
 
+# --- Similar skills ---------------------------------------------------------------------
+
+def seed_skills(db, repo, skills, commit, scanned_at="2026-01-01T00:00:00+00:00"):
+    with Store(db) as s:
+        s.replace_repo(repo, skills, commit)
+        s.conn.execute("UPDATE repos SET scanned_at = ? WHERE repo = ?", (scanned_at, repo))
+        s.conn.commit()
+
+
+def test_similar_shows_results_above_threshold_sorted(serve, tmp_path):
+    from skill_atlas.models import Skill
+
+    db = tmp_path / "web.db"
+    target = Skill("https://github.com/o/r", "pdf", "Work with PDF files", "a" * 40,
+                    ".claude/skills/pdf/SKILL.md", content="Convert PDFs to text and back.")
+    close = Skill("https://github.com/o/other", "pdf2", "Work with PDF files", "b" * 40,
+                   ".claude/skills/pdf2/SKILL.md", content="Convert PDFs to text.")
+    # empty description/content scores 0 similarity (SequenceMatcher ratio against "" is 0), so it's excluded
+    unrelated = Skill("https://github.com/o/other", "deploy", "", "b" * 40, ".claude/skills/deploy/SKILL.md")
+    seed_skills(db, target.repo, [target], target.commit)
+    seed_skills(db, close.repo, [close, unrelated], close.commit)
+
+    status, body = serve()(similar_url(target.repo, target.path))
+    assert status == 200
+    assert title(body) == "Similar to pdf · skill-atlas"
+    assert "<h1>Similar to pdf</h1>" in body
+    names = re.findall(r'class="repo__name">([^<]+)<', body)
+    assert names == ["pdf2"]  # unrelated is below 10%, target itself is excluded
+    assert re.search(r'<span class="badge">\d+\.\d%</span>', body)
+    assert f'href="{html.escape(stored_url(close.repo))}"' in body
+
+
+def test_similar_no_results(serve, tmp_path):
+    from skill_atlas.models import Skill
+
+    db = tmp_path / "web.db"
+    target = Skill("https://github.com/o/r", "pdf", "Work with PDF files", "a" * 40, ".claude/skills/pdf/SKILL.md")
+    seed_skills(db, target.repo, [target], target.commit)
+    status, body = serve()(similar_url(target.repo, target.path))
+    assert status == 200
+    assert "No similar skills found." in body
+    assert "10%" in body
+
+
+def test_similar_unknown_repo_is_404(serve, tmp_path):
+    seed_skills(tmp_path / "web.db", "https://github.com/o/r", [], "a" * 40)
+    status, body = serve()(similar_url("https://github.com/o/missing", ".claude/skills/x/SKILL.md"))
+    assert status == 404
+    assert "o/missing isn&#x27;t in the catalogue yet." in body
+
+
+def test_similar_unknown_path_is_404(serve, tmp_path):
+    from skill_atlas.models import Skill
+
+    db = tmp_path / "web.db"
+    seed_skills(db, "https://github.com/o/r", [Skill("https://github.com/o/r", "pdf", "d", "a" * 40,
+                                                       ".claude/skills/pdf/SKILL.md")], "a" * 40)
+    status, body = serve()(similar_url("https://github.com/o/r", ".claude/skills/missing/SKILL.md"))
+    assert status == 404
+    assert "isn&#x27;t a stored skill of o/r" in body
+
+
+@pytest.mark.parametrize("path", ["/similar", "/similar?repo=o/r", "/similar?path=x"])
+def test_similar_missing_params_is_404(serve, path):
+    status, body = serve()(path)
+    assert status == 404
+    assert "No skill given." in body
+
+
+def test_similar_escapes_names(serve, tmp_path):
+    from skill_atlas.models import Skill
+
+    db = tmp_path / "web.db"
+    repo = "file:///srv/<b>&x"
+    target = Skill(repo, "a", "shared text", "a" * 40, "SKILL.md")
+    other = Skill(repo, "<script>alert(1)</script>", "shared text", "a" * 40, "other/SKILL.md")
+    seed_skills(db, repo, [target, other], target.commit)
+    status, body = serve()(similar_url(repo, target.path))
+    assert status == 200
+    assert "<script>alert" not in body
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in body
+
+
 def test_not_found_page(serve):
     status, body = serve()("/nope")
     assert status == 404
@@ -375,7 +477,9 @@ def test_every_page_has_the_repo_input_and_a_filter_only_with_skills(serve, fixt
     url = fixture_repo.as_uri()
     # fixture_repo has skills, so its scan/stored pages also carry the JS-only skill filter input
     pages_with_skills = [scan_url(url), "/stored?repo=" + quote(url, safe="")]
-    pages_without = ["/", "/stored?repo=x/y", "/nope"]
+    pages_without = [
+        "/", "/stored?repo=x/y", "/nope", similar_url(url, ".claude/skills/pdf/SKILL.md"),
+    ]
     for path in pages_with_skills + pages_without:
         _, body = get(path)
         expected = 2 if path in pages_with_skills else 1

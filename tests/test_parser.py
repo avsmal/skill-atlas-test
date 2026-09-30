@@ -18,4 +18,10 @@ def test_parse_skill_name_fallback_and_whitespace(tmp_path):
     d.mkdir()
     p = d / "SKILL.md"
     p.write_text("---\ndescription: |\n  multi\n  line\n---\n")
-    assert parse_skill(p) == ("my-skill", "multi line")
+    assert parse_skill(p) == ("my-skill", "multi line", "")
+
+
+def test_parse_skill_content_is_the_body(tmp_path):
+    p = tmp_path / "SKILL.md"
+    p.write_text("---\nname: a\n---\n\nSome instructions.\n\nMore text.\n")
+    assert parse_skill(p) == ("a", "", "Some instructions.\n\nMore text.")

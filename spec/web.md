@@ -42,6 +42,8 @@ The server uses only the Python standard library (`http.server`, threaded); no n
 | `GET /?repo=<repo>` where the clone fails | Page with `error: <git stderr>`. `502`, DB unchanged |
 | `GET /stored?repo=<repo>` | The stored skills of `<repo>`, read from the DB (no clone). `200` |
 | `GET /stored?repo=<repo>` for a repo not in the DB, or with no `repo` | Page saying it isn't in the catalogue, with a *Scan it* link. `404` |
+| `GET /similar?repo=<repo>&path=<path>` | Skills similar to the one at `<path>` in `<repo>`'s stored skills. `200` |
+| `GET /similar?repo=<repo>&path=<path>` when that repo/path isn't stored, or `repo`/`path` is missing | Page saying it isn't in the catalogue, with a *Scan it* link. `404` |
 | Any other path | `404` page with the scan form and a link home |
 
 The form uses `GET`, so a result page has a shareable URL (`/?repo=JetBrains/kotlin`).
@@ -89,6 +91,23 @@ and a *View on GitHub* link for GitHub repositories), a **Rescan** link to
 `skill-atlas list --repo <repo> --color never` prints. The title bar shows that command. As on the
 scan result page, the panel has a filter field when the repository has at least one stored skill.
 
+Each skill's **name**, in the output panel, links to
+`/similar?repo=<repo>&path=<path of that skill>` — see *Similar skills* below. Unlike the path's
+GitHub link, this is an in-app link, so it opens in the same tab. There is no separate list: the
+link is part of the same output panel, whose text keeps matching the CLI exactly (see *Output*).
+
+### Similar skills (`/similar?repo=<repo>&path=<path>`)
+
+The scan form (empty), then a breadcrumb back to the skill's repository
+(`/stored?repo=<repo>`), the skill's name and path, and a list of similar skills — see
+*Similar skills* below. Each entry links to `/stored?repo=<that skill's repo>`. With no
+result above the threshold, the page says so instead of showing an empty list.
+The title is `Similar to <skill name> · skill-atlas`.
+
+If `repo`/`path` don't identify a stored skill (unknown repository, a path not in that
+repository's stored skills, or either parameter missing), the response is the same 404 page
+used by `/stored` for an unknown repository, offering to scan `repo` when one was given.
+
 ## Design
 
 - Light and dark themes follow the system (`prefers-color-scheme`). Colors are CSS custom properties.
@@ -129,6 +148,9 @@ https://github.com/o/r @ c823f9e564fd
   Only repositories that normalize to `https://github.com/<owner>/<name>` get links; for any other
   URL (e.g. `file://` with `--allow-local`) the path stays plain text. The link text is the path
   itself, so the `<pre>` text is unchanged. Every path is linked, including the paths of duplicates.
+- On the stored-repository page only, each skill's **name is a link to its Similar skills page**
+  (see below), the same way: the link text is just the name, so the `<pre>` text is unchanged.
+  Unlike the path's GitHub link, it's an in-app link and doesn't open in a new tab.
 - All text taken from the repository (names, descriptions, paths), from the DB, and from the input is HTML-escaped.
 
 ### Skill filter
@@ -148,6 +170,31 @@ filter only hides/shows elements already on the page.
 
 While a scan is running, the button shows *Scanning…* and is disabled.
 
+## Similar skills
+
+Every stored skill can be compared against every other skill stored in the database, across all
+repositories, to find similar ones — reuse and overlap are often invisible until you can see that
+two repositories independently wrote near-identical skills.
+
+- **Similarity** of two skills is the average of the `SequenceMatcher.ratio()` (Python's
+  `difflib`, stdlib) of their `description`s and of their `content`s (the `SKILL.md` body,
+  after the frontmatter — see *Frontmatter* in [cli.md](cli.md)), each in `[0, 1]`. Averaging
+  keeps the (often much longer) content from drowning out the description in the score.
+- Only skills with similarity **strictly greater than 10%** are shown.
+- Results are sorted by **descending similarity**; ties break by repository, then skill name.
+- A skill is never compared against itself. Two rows with the same `(repo, path)` never both
+  appear; distinct paths (e.g. `.agents`/`.claude` duplicates, which are already merged into one
+  stored row — see rule (c) in [cli.md](cli.md)) are ordinary candidates like any other.
+- The comparison only ever looks at what's already **stored** in the database — it never
+  reaches out to a repository, so it works offline and doesn't depend on the scanning
+  repository still being reachable.
+- Each result shows the similar skill's **name** and its **similarity**, as a percentage with
+  one decimal place (e.g. `23.5%`), plus its repository so a same-named skill from two different
+  repositories can be told apart.
+
+`skill_atlas.similarity.find_similar(target, candidates, threshold=0.10)` implements this; see
+its docstring and `similarity.py`'s row in [cli.md](cli.md)'s *Components* table.
+
 ## Security
 
 The server clones whatever URL a visitor types, so by default only URLs that normalize to
@@ -166,11 +213,12 @@ web.py ──► cli.scan_repo() ──► (same pipeline as the CLI)
 
 | Module | Responsibility |
 |---|---|
-| `web.py` | `HtmlPainter` (a `Painter` that escapes HTML, emits `<span>`s, and renders `link()` as `<a>`), `_skill_wrap()` (the `data-name`/`data-desc` wrapper for the skill filter), the page renderers (`render_home()`, `render_scan()`, `render_stored()`, `render_not_found()`), the request handler, and `make_server()` |
+| `web.py` | `HtmlPainter` (a `Painter` that escapes HTML, emits `<span>`s, and renders `link()` as `<a>`), `_skill_wrap()` (the `data-name`/`data-desc` wrapper for the skill filter), the page renderers (`render_home()`, `render_scan()`, `render_stored()`, `render_similar()`, `render_not_found()`), the request handler, and `make_server()` |
 | `store.py` | `Store.repos()`: one `RepoEntry(repo, commit, scanned_at, skills)` per repository, most recent first |
 | `output.py` | `Painter.link(text, url, *styles)`: plain styled text in the terminal; `render_skills()` passes each path's GitHub URL through it |
-| `output.py` | `render_skills()` / `render_list()` take an optional `wrap(skill, block)` callback used only by the web UI to wrap each skill's block for the filter, without changing the CLI's plain-text output |
+| `output.py` | `render_skills()` / `render_list()` take optional `name_url(skill)` (link the name, for *Similar skills*) and `wrap(skill, block)` (wrap each skill's block, for the filter) callbacks, used only by the web UI, without changing the CLI's plain-text output |
 | `repo.py` | `github_blob_url(repo, commit, path)`: the file's GitHub URL, or `None` for non-GitHub repos |
+| `similarity.py` | `find_similar(target, candidates, threshold)`: see *Similar skills* above |
 | `cli.py` | The `serve` subcommand. `scan_repo()` takes a `warn` callback so the web page can collect warnings instead of printing them |
 
 ## Testing
@@ -193,6 +241,11 @@ row of the *HTTP interface* table, plus:
   `--no-store` note; escapes stored text; the top bar shows the repository count
 - `/stored?repo=`: accepts the same input forms as scan; its `<pre>` text equals
   `skill-atlas list --repo <repo> --color never`; `404` for unknown or missing `repo`; links to rescan
+- `/stored?repo=`: each skill's name, inside the `<pre>`, links to `/similar?repo=&path=` (in the same
+  tab, unlike the path's GitHub link), and the `<pre>` text is unaffected once tags are stripped
+- `/similar?repo=&path=`: results above 10% shown with name and one-decimal percentage, sorted descending;
+  the target skill itself and skills at or below 10% are excluded; `404` for an unknown repo, an unknown path,
+  or a missing parameter; links back to the skill's own repository and to each result's repository
 - the page `<title>` for home and repository pages; the repository `<input>` is on every page, and
   the filter `<input>` is present (`data-filter`, `hidden`) only when the output lists a skill and
   absent for 0-skill scans/repositories; skill names/descriptions in `data-name`/`data-desc` are escaped

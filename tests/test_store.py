@@ -22,6 +22,33 @@ def test_duplicates_round_trip(tmp_path):
         assert st.list() == [s]
 
 
+def test_content_round_trip(tmp_path):
+    s = Skill("r", "pdf", "d", "c", ".claude/skills/pdf/SKILL.md", content="Some instructions.")
+    with Store(tmp_path / "db.sqlite") as st:
+        st.replace_repo("r", [s])
+    with Store(tmp_path / "db.sqlite") as st:
+        assert st.list() == [s]
+
+
+def test_old_db_gets_content_column(tmp_path):
+    import sqlite3
+
+    db = tmp_path / "old.sqlite"
+    conn = sqlite3.connect(db)
+    conn.executescript("""
+        CREATE TABLE skills (repo TEXT NOT NULL, path TEXT NOT NULL, name TEXT NOT NULL, description TEXT,
+                             commit_sha TEXT NOT NULL, duplicates TEXT NOT NULL DEFAULT '[]',
+                             scanned_at TEXT NOT NULL, PRIMARY KEY (repo, path));
+        INSERT INTO skills VALUES ('r', 'a/SKILL.md', 'a', 'd', 'c', '[]', '2026-01-01T00:00:00+00:00');
+    """)
+    conn.close()
+    with Store(db) as st:
+        assert st.list() == [Skill("r", "a", "d", "c", "a/SKILL.md")]
+        s = Skill("r", "b", "d", "c", "b/SKILL.md", content="body text")
+        st.replace_repo("r", [s])
+        assert st.list() == [s]
+
+
 def test_old_db_gets_duplicates_column(tmp_path):
     import sqlite3
 

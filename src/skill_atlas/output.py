@@ -45,7 +45,7 @@ class Painter:
         codes = ";".join(_CODES[s] for s in styles)
         return f"\033[{codes}m{text}\033[0m"
 
-    def link(self, text: str, url: str | None, *styles: str) -> str:
+    def link(self, text: str, url: str | None, *styles: str, external: bool = True) -> str:
         """``text`` linking to ``url``; the terminal shows just the styled text."""
         return self(text, *styles)
 
@@ -56,12 +56,15 @@ def render_skills(
     *,
     show_source: bool = False,
     width: int | None = None,
+    name_url: Callable[[Skill], str | None] | None = None,
     wrap: Callable[[Skill, str], str] | None = None,
 ) -> str:
     """Numbered entries, one field per line; long descriptions are wrapped.
 
     ``show_source`` adds the repo and commit lines (used by ``list``, where
-    entries may come from several repositories).
+    entries may come from several repositories). ``name_url(skill)``, when given, links
+    each skill's name (used by the web UI's *Similar skills*; the terminal ignores it, like
+    the path's GitHub link).
 
     ``wrap``, if given, wraps each skill's rendered block (used by the web UI to
     attach a searchable container around it without changing the plain text).
@@ -89,7 +92,8 @@ def render_skills(
     blocks = []
     for i, s in enumerate(skills, 1):
         number = paint(f"{i:>{num_w}}.", "yellow")
-        lines = [f"{number} {paint(s.name, 'bold', 'cyan')}"]
+        name = paint.link(s.name, name_url(s) if name_url else None, "bold", "cyan", external=False)
+        lines = [f"{number} {name}"]
         lines += field("description", s.description or "—", wrap=True)
         lines += field("path", s.path, "green", url=github_blob_url(s.repo, s.commit, s.path))
         lines += [pad + path_line(s, p) for p in s.duplicates]  # merged .claude copies (rule c)
@@ -115,12 +119,13 @@ def render_list(
     paint: Painter,
     *,
     width: int | None = None,
+    name_url: Callable[[Skill], str | None] | None = None,
     wrap: Callable[[Skill, str], str] | None = None,
 ) -> str:
     """What ``skill-atlas list`` prints: entries with their repo and commit, then a summary."""
     if not skills:
         return paint("No skills stored", "yellow")
-    entries = render_skills(skills, paint, show_source=True, width=width, wrap=wrap)
+    entries = render_skills(skills, paint, show_source=True, width=width, name_url=name_url, wrap=wrap)
     return f"{entries}\n\n{paint(f'{len(skills)} skill(s) stored', 'bold', 'green')}"
 
 
