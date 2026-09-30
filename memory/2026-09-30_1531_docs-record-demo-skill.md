@@ -15,10 +15,6 @@
   and Playwright locators stay available for anything the helpers don't cover.
 - The kit does the post-processing on exit (trimmed MP4, GIF preview, frame sheet), so the
   "check the frame sheet before showing the video" step can't be skipped for lack of a file.
-- Playwright stays out of `pyproject.toml`: it's a ~190 MB download used only for docs, so the
-  skill says to ask the user before installing it.
-- No tests in CI: the recorder needs Chromium and network clones. Verified by re-recording
-  `docs/demo.mp4` three times and by the busy-port refusal.
 
 ## Stale records removed
 - `2026-09-30_1450_docs-demo-video.md`: "The recording scripts were not committed" — they are now,

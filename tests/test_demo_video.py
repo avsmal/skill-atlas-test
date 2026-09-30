@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -13,10 +15,19 @@ ROOT = Path(__file__).resolve().parent.parent
 FRAMES = ROOT / "tests" / "demo_frames"
 MOMENTS = ROOT / "docs" / "demo-moments.json"
 
-_spec = importlib.util.spec_from_file_location("demo_video", ROOT / "scripts" / "demo" / "video.py")
-video = importlib.util.module_from_spec(_spec)
-sys.modules[_spec.name] = video  # dataclasses look their module up
-_spec.loader.exec_module(video)
+
+
+def load(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module  # dataclasses look their module up
+    spec.loader.exec_module(module)
+    return module
+
+
+video = load("demo_video", ROOT / "scripts" / "demo" / "video.py")
+# Playwright is imported only when recording, so the kit loads without it.
+kit = load("demo_kit", ROOT / ".claude" / "skills" / "record-demo" / "scripts" / "demo_kit.py")
 
 KEY_MOMENTS = [
     "01-home-empty", "02-ideavim-result", "03-filter-commit", "04-kotlin-result",
@@ -36,21 +47,33 @@ def save(d: Path, name: str, img: Image.Image) -> None:
 # --- Trimming --------------------------------------------------------------------------------
 
 def test_scan_waits_keep_head_and_tail():
-    assert video.cuts_from_markers([[2.0, 10.0]]) == [(2.8, 9.8)]
+    assert kit.cuts_from_markers([[2.0, 10.0]]) == [(2.8, 9.8)]
 
 
 def test_short_scan_waits_are_not_cut():
-    assert video.cuts_from_markers([[2.0, 2.9]]) == []
+    assert kit.cuts_from_markers([[2.0, 2.9]]) == []
 
 
 def test_moments_shift_by_the_cuts_before_them():
     cuts = [(2.0, 5.0), (10.0, 11.0)]
     moments = {"before": 1.0, "between": 7.0, "after": 12.0}
-    assert video.map_moments(moments, cuts) == {"before": 1.0, "between": 4.0, "after": 8.0}
+    assert kit.map_moments(moments, cuts) == {"before": 1.0, "between": 4.0, "after": 8.0}
 
 
 def test_moment_inside_a_cut_moves_to_the_cut():
-    assert video.map_moments({"m": 3.0}, [(2.0, 5.0)]) == {"m": 2.0}
+    assert kit.map_moments({"m": 3.0}, [(2.0, 5.0)]) == {"m": 2.0}
+
+
+def test_frozen_clock():
+    now = datetime(2026, 9, 30, 14, 40, tzinfo=timezone.utc)
+    frozen = kit.frozen_datetime(now)
+    assert frozen.now(timezone.utc) == now
+    assert frozen.now() == datetime(2026, 9, 30, 14, 40)
+
+
+def test_scenes_mark_every_key_moment():
+    scenes = (ROOT / ".claude" / "skills" / "record-demo" / "scripts" / "demo_30s.py").read_text()
+    assert re.findall(r'mark\(?=?"([^"]+)"', scenes) == KEY_MOMENTS
 
 
 # --- Comparison ------------------------------------------------------------------------------

@@ -1,8 +1,8 @@
-"""Trim the demo recording, take screenshots at its key moments, and compare screenshots.
+"""Take screenshots at the demo video's key moments, and compare screenshots.
 
-    python scripts/demo/video.py trim DIR
-        DIR/raw.webm + markers.json + moments.json (from record.py)
-        -> DIR/demo.mp4 + DIR/demo-moments.json (moment times in demo.mp4)
+The video and its demo-moments.json come from the record-demo skill
+(.claude/skills/record-demo/scripts/demo_30s.py).
+
     python scripts/demo/video.py extract VIDEO MOMENTS OUT_DIR
         One PNG per moment: OUT_DIR/<name>.png
     python scripts/demo/video.py compare EXPECTED_DIR ACTUAL_DIR DIFF_DIR [options]
@@ -23,9 +23,6 @@ from pathlib import Path
 
 from PIL import Image, ImageChops
 
-# Keep this much of each scan wait so the "Scanning…" state stays visible.
-KEEP_HEAD, KEEP_TAIL = 0.8, 0.2
-FPS = 30
 # Screenshots are taken this long after a moment starts: the recording sharpens for about
 # a second after a page loads. Every moment lasts at least 1.5 s.
 SETTLE = 1.2
@@ -35,34 +32,6 @@ CHANNEL_THRESHOLD = 40
 # A frame fails when more pixels than this have changed. Two takes differ by 0 pixels;
 # a one-character change in the page footer changes ~13.
 MAX_CHANGED_PIXELS = 5
-
-
-def cuts_from_markers(markers: list[list[float]]) -> list[tuple[float, float]]:
-    """Parts of each scan wait ``[start, end]`` to cut from the raw video."""
-    return [(a + KEEP_HEAD, b - KEEP_TAIL) for a, b in markers if b - a > KEEP_HEAD + KEEP_TAIL]
-
-
-def map_moments(moments: dict[str, float], cuts: list[tuple[float, float]]) -> dict[str, float]:
-    """Moment times in the trimmed video. A moment inside a cut moves to where the cut was."""
-    return {
-        name: round(t - sum(min(b, t) - a for a, b in cuts if a < t), 3)
-        for name, t in moments.items()
-    }
-
-
-def trim(d: Path) -> None:
-    markers = json.loads((d / "markers.json").read_text())
-    moments = json.loads((d / "moments.json").read_text())
-    cuts = cuts_from_markers(markers)
-    expr = "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b in cuts) or "0"
-    subprocess.run(
-        ["ffmpeg", "-y", "-loglevel", "error", "-i", str(d / "raw.webm"),
-         "-vf", f"fps={FPS},select='not({expr})',setpts=N/{FPS}/TB",
-         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", "-movflags", "+faststart",
-         str(d / "demo.mp4")],
-        check=True,
-    )
-    (d / "demo-moments.json").write_text(json.dumps(map_moments(moments, cuts), indent=2) + "\n")
 
 
 def extract(video: Path, moments_file: Path, out: Path) -> None:
@@ -152,8 +121,6 @@ def report(results: list[FrameResult], title: str, max_changed_pixels: int) -> s
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    t = sub.add_parser("trim")
-    t.add_argument("dir", type=Path)
     e = sub.add_parser("extract")
     e.add_argument("video", type=Path)
     e.add_argument("moments", type=Path)
@@ -167,9 +134,7 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--title", default="Demo video screenshots")
     args = ap.parse_args(argv)
 
-    if args.cmd == "trim":
-        trim(args.dir)
-    elif args.cmd == "extract":
+    if args.cmd == "extract":
         extract(args.video, args.moments, args.out)
     else:
         results = compare_dirs(args.expected, args.actual, args.diff,

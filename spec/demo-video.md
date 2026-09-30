@@ -7,12 +7,15 @@ demo fails CI until the baseline is updated on purpose.
 
 ## Recording
 
-`scripts/demo/record.py OUT_DIR` drives headless Chromium (Playwright, pinned in the `demo` extra of
-`pyproject.toml`) with a 1280×800 viewport, device scale factor 2, and a dark color scheme. It draws a
-fake mouse pointer, because Playwright doesn't render one.
+The [`record-demo` skill](../.claude/skills/record-demo/SKILL.md) records the video.
+`demo_30s.py OUT_DIR` holds the scenes, and `demo_kit.Demo` is the recorder. It drives headless
+Chromium (Playwright, pinned in the `demo` extra of `pyproject.toml`) with a 1280×800 viewport,
+device scale factor 2, and a dark color scheme. It draws a fake mouse pointer, because Playwright
+doesn't render one.
 
-The web server runs in-process on a fresh DB in `OUT_DIR`, on a free port. Its clock is frozen at
-`2026-09-30 14:40 UTC`, so the scan times on the catalogue and stored pages never change.
+The web server runs in-process on a fresh DB in `OUT_DIR`. `demo_30s.py` freezes its clock at
+`2026-09-30 14:40 UTC` (`Demo(clock=…)`), so the scan times on the catalogue and stored pages never
+change.
 
 The scans read **pinned repositories**. `scripts/demo/pin-repos.sh DIR` creates local mirrors that hold
 only the skill files at these commits:
@@ -26,13 +29,18 @@ It also writes `DIR/gitconfig` with `url.<mirror>.insteadOf https://github.com/<
 `GIT_CONFIG_GLOBAL=DIR/gitconfig`, skill-atlas clones the mirrors, while the pages still show the
 GitHub URLs and commits. It needs the network only to create the mirrors.
 
-`scripts/demo/video.py trim OUT_DIR` cuts the middle of every scan wait longer than 1 s, keeping
-0.8 s of *Scanning…* and 0.2 s before the result. It encodes `OUT_DIR/demo.mp4` (H.264, 30 fps) and
-writes `OUT_DIR/demo-moments.json`, which holds the key moments' times in the trimmed video.
+On exit, the kit writes:
+- `OUT_DIR/demo.mp4` (H.264, 30 fps). Every scan wait longer than 1 s is cut, keeping 0.8 s of
+  *Scanning…* and 0.2 s before the result.
+- `demo.gif`.
+- `sheet.png`.
+- `moments.json`: the key moments' times in the raw recording.
+- `demo-moments.json`: the key moments' times in `demo.mp4`. A moment's time moves back by the
+  length of the cuts before it.
 
 ## Key moments
 
-Each moment begins once the page has loaded and the pointer has stopped. The page then stays still
+The scenes call `d.mark(<moment>)` once the page has loaded and the pointer has stopped. The page then stays still
 for at least 1.5 s. The screenshot is taken 1.2 s into the moment, because the recording sharpens for
 about a second after a page loads.
 
@@ -72,8 +80,8 @@ The baseline is committed:
 - `tests/demo_frames/<moment>.png`: extracted from `docs/demo.mp4` at those moments.
 - `docs/demo.gif`: an 800 px, 10 fps copy of the video for the README and PR descriptions.
 
-`tests/test_demo_video.py` checks that the baseline has exactly the key moments above, in order, and
-that every frame is 1280×800.
+`tests/test_demo_video.py` checks three things: `demo_30s.py` marks exactly the key moments above,
+in order; the baseline has exactly those moments; and every frame is 1280×800.
 
 To accept a new recording (after an intended UI change, or a new Playwright or runner image), run:
 
@@ -81,8 +89,8 @@ To accept a new recording (after an intended UI change, or a new Playwright or r
 scripts/demo/update-baseline.sh <run id>
 ```
 
-It downloads that CI run's `demo-video` artifact, copies the video, moments and frames into place,
-and rebuilds the GIF. Look at the frames and commit them.
+It downloads that CI run's `demo-video` artifact and copies the video, GIF, moments and frames into
+place. Look at the frames and commit them.
 
 ## CI
 
@@ -93,7 +101,7 @@ The `demo-video` job in `.github/workflows/tests.yml`:
 - Installs ffmpeg, the `demo` extra and Chromium, then pins the repositories.
 - **Checks the baseline:** extracts frames from the committed `docs/demo.mp4` and compares them with
   `tests/demo_frames/`, so the PNGs can't drift from the video.
-- **Records and compares:** records, trims and extracts, then compares the new frames with
+- **Records and compares:** records with `demo_30s.py`, extracts the frames, then compares the new frames with
   `tests/demo_frames/`. It records even if the baseline check failed.
-- Always uploads the artifact `demo-video`: `demo.mp4`, `demo-moments.json`, `frames/`, and the
-  `diff/` and `baseline-diff/` images of failing frames.
+- Always uploads the artifact `demo-video`: `demo.mp4`, `demo.gif`, `sheet.png`,
+  `demo-moments.json`, `frames/`, and the `diff/` and `baseline-diff/` images of failing frames.

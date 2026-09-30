@@ -116,8 +116,7 @@ jobs:
         id: record
         if: ${{ !cancelled() && steps.pin.outcome == 'success' }}
         run: |
-          python scripts/demo/record.py "$OUT"
-          python scripts/demo/video.py trim "$OUT"
+          python .claude/skills/record-demo/scripts/demo_30s.py "$OUT"
           python scripts/demo/video.py extract "$OUT/demo.mp4" "$OUT/demo-moments.json" "$OUT/frames"
 
       - name: Compare screenshots with tests/demo_frames
@@ -131,6 +130,8 @@ jobs:
           name: demo-video
           path: |
             ${{ runner.temp }}/demo/demo.mp4
+            ${{ runner.temp }}/demo/demo.gif
+            ${{ runner.temp }}/demo/sheet.png
             ${{ runner.temp }}/demo/demo-moments.json
             ${{ runner.temp }}/demo/frames/
             ${{ runner.temp }}/demo/diff/
