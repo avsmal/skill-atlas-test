@@ -32,12 +32,13 @@ https://github.com/JetBrains/kotlin @ c823f9e564fd
 |---|---|
 | `skill-atlas scan <repo>` | Clone the repo, find its skills, print them, and save them to the DB |
 | `skill-atlas list` | Print the skills saved in the DB |
+| `skill-atlas serve` | Run the web UI: one input field, the same output as `scan`. See [web.md](web.md) |
 
 ### Options
 
 | Option | Commands | Meaning |
 |---|---|---|
-| `--json` | scan, list | Print a JSON array of `{repo, name, description, commit, path}` instead of text |
+| `--json` | scan, list | Print a JSON array of `{repo, name, description, commit, path, duplicates}` instead of text |
 | `--color WHEN` | scan, list | `auto` (default), `always`, or `never`. See *Output format* |
 | `--db PATH` | scan, list | SQLite DB path. Default: `$SKILL_ATLAS_DB`, or `~/.skill-atlas/atlas.db` if unset |
 | `--ref REF` | scan | Branch or tag to scan (default: the remote's default branch) |
@@ -91,7 +92,9 @@ Projects often keep the same skill in both `.agents/skills/` (read by several ag
 `.claude/skills/` (read by Claude Code). Within the **same** `<prefix>`:
 
 - If `.agents/skills` and `.claude/skills` contain skills with the same `name` (after frontmatter parsing),
-  only **one** entry is reported, and its `path` is the `.agents` one.
+  only **one** entry is reported, and its `path` is the `.agents` one. The paths of the merged
+  `.claude` copies are kept in its `duplicates` list (in path order) and shown in the output, so every
+  copy's location is visible.
 - If the two files' contents differ, a warning is printed and the `.agents` copy is still used:
   `warning: <name>: .agents and .claude copies differ; using <prefix>/.agents/skills/<skill-dir>/SKILL.md`.
 - Skills with the same name under **different** prefixes (`backend/.agents/skills/pdf` and `.agents/skills/pdf`)
@@ -124,7 +127,7 @@ Projects often keep the same skill in both `.agents/skills/` (read by several ag
 |---|---|---|
 | `.claude/skills/pdf/SKILL.md` | ✅ 1 skill | a |
 | `.agents/skills/pdf/SKILL.md` | ✅ 1 skill | a |
-| `.agents/skills/pdf/SKILL.md` + `.claude/skills/pdf/SKILL.md` | ✅ 1 skill, path `.agents/skills/pdf/SKILL.md` | c |
+| `.agents/skills/pdf/SKILL.md` + `.claude/skills/pdf/SKILL.md` | ✅ 1 skill, path `.agents/skills/pdf/SKILL.md`, duplicates `[.claude/skills/pdf/SKILL.md]` | c |
 | the same pair with different contents | ✅ 1 skill (`.agents` path) + warning | c |
 | `backend/.claude/skills/deploy/SKILL.md` | ✅ 1 skill | a (monorepo prefix) |
 | `backend/.agents/skills/pdf/SKILL.md` + `.agents/skills/pdf/SKILL.md` | ✅ 2 skills | c (different prefixes) |
@@ -150,6 +153,15 @@ Text output is a numbered list. Each entry takes several lines, with one field p
 - One indented `label: value` line per field, with values aligned in a column:
   - `scan`: `description`, `path`. The repo and commit appear once, in the header line.
   - `list`: `description`, `path`, `repo`, `commit`. Entries can come from several repositories, so each one shows its own.
+- The `path` field lists **every copy** of the skill, one per line: first `path` (the copy that is used),
+  then each of its `duplicates`, on continuation lines aligned with the value column:
+
+  ```
+  1. pdf
+     description: Work with PDF files
+     path:        .agents/skills/pdf/SKILL.md
+                  .claude/skills/pdf/SKILL.md
+  ```
 - Only the description is word-wrapped, to fit the terminal width; continuation lines line up with the value column.
   Paths, URLs and SHAs are never wrapped, so they can be copied.
 - Entries are separated by a blank line and followed by a summary line (`N skill(s) found`).
@@ -188,7 +200,7 @@ cli.py ──► repo.py ──► discovery.py ──► parser.py ──► de
 | `output.py` | `use_color()`, `Painter` (ANSI styling), `render_skills()` / `render_header()` / `render_summary()`, and the `warn()` / `error()` stderr helpers |
 | `repo.py` | `normalize_repo_url()`. `clone()` is a context manager that clones into a temp dir, yields `(path, commit_sha)`, and deletes the temp dir afterwards |
 | `discovery.py` | `find_skill_files(root)`: sorted list of `SKILL.md` paths that pass the location (a) and exclusion (b) rules. Symlinks are reported separately |
-| `dedupe.py` | `dedupe(skills)`: applies rule c (merges `.agents`/`.claude` copies within a prefix and warns when contents differ) |
+| `dedupe.py` | `dedupe(skills)`: applies rule c (merges `.agents`/`.claude` copies within a prefix, records the merged paths in `duplicates`, and warns when contents differ) |
 | `parser.py` | `parse_frontmatter()` and `parse_skill()` → `(name, description)`. Raises `SkillParseError` on bad input |
 | `models.py` | The `Skill` dataclass |
 | `store.py` | The `Store` class: creates the schema, `replace_repo()`, `list()` |
@@ -222,10 +234,14 @@ CREATE TABLE skills (
     name        TEXT NOT NULL,
     description TEXT,
     commit_sha  TEXT NOT NULL,   -- full 40-char SHA that was scanned
+    duplicates  TEXT NOT NULL DEFAULT '[]',  -- JSON array of merged .claude copy paths (rule c)
     scanned_at  TEXT NOT NULL,   -- ISO-8601 UTC
     PRIMARY KEY (repo, path)
 );
 ```
+
+A DB created before the `duplicates` column existed gets it added (`ALTER TABLE`) when it is opened;
+old rows read back with no duplicates until the repository is rescanned.
 
 The key is `(repo, path)` rather than `(repo, name)`, because two skills in one repository can share a name.
 A scan replaces **all** rows for its repository in a single transaction. Rescanning
@@ -245,14 +261,15 @@ never creates duplicates, and skills that were deleted upstream disappear from t
 `pytest` covers:
 - the parser, discovery, and URL normalization (unit tests)
 - output: color decisions, number alignment, description wrapping
-- the store: replace semantics and filtering
+- the store: replace semantics, filtering, `duplicates` round trip, and adding the column to an old DB
 - end-to-end `scan` and `list` against a local git fixture repo, cloned through a `file://` URL (no network)
 
 Edge-case tests (`tests/test_edge_cases.py`) build a fixture repo for each scenario and run the
 full clone → sparse checkout → discovery → parse → dedupe pipeline, so the sparse patterns
 and the discovery rules are tested together:
 - one test per row of the *Examples* table in "What counts as a skill"
-- `.agents`/`.claude` pairs: identical (1 skill, no warning), different (1 skill + warning), a skill present in only one of them
+- `.agents`/`.claude` pairs: identical (1 skill, no warning), different (1 skill + warning), a skill present in only one of them;
+  the kept skill's `duplicates` and the text output list the `.claude` path
 - a monorepo with several prefixes, each with its own `.agents`/`.claude` pair
 - every exclusion segment from rule b, including case variants (`Resources`, `TestData`) and the `src/test*` rule
 - case variants of the file name (`skill.md`, `Skill.md`) and near-misses (`SKILL.md.bak`, `skills.md`)
@@ -263,7 +280,7 @@ a checked-in tree that contains all the edge cases above at once. It is copied t
 scanned through `file://`. `tests/fixtures/edge-repo.expected.json` lists:
 - the skills, in the exact expected order
 - the exact warnings
-- which `.claude` copies were merged into which `.agents` skills
+- which `.claude` copies were merged into which `.agents` skills (checked against each skill's `duplicates`)
 - every ignored path, with the rule that excludes it
 
 A guard test fails if a fixture file isn't classified in that JSON. Another checks that the byte-level

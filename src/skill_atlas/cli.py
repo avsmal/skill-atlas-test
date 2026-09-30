@@ -5,6 +5,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Callable
 
 from . import __version__
 from .dedupe import dedupe
@@ -16,7 +17,9 @@ from .repo import RepoError, clone, normalize_repo_url
 from .store import Store, default_db_path
 
 
-def scan_repo(url: str, ref: str | None = None) -> tuple[str, str, list[Skill]]:
+def scan_repo(
+    url: str, ref: str | None = None, warn: Callable[[str], None] = warn,
+) -> tuple[str, str, list[Skill]]:
     repo = normalize_repo_url(url)
     skills: list[Skill] = []
     with clone(repo, ref) as (root, commit):
@@ -79,6 +82,23 @@ def cmd_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_serve(args: argparse.Namespace) -> int:
+    from .web import make_server
+
+    server = make_server(
+        args.host, args.port, args.db, store=not args.no_store, allow_local=args.allow_local,
+    )
+    host, port = server.server_address[:2]
+    print(f"skill-atlas web UI on http://{host}:{port}/", flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="skill-atlas", description=__doc__)
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -104,6 +124,20 @@ def build_parser() -> argparse.ArgumentParser:
     ls = sub.add_parser("list", parents=[common], help="list skills stored in the database")
     ls.add_argument("--repo", help="only show skills of this repository")
     ls.set_defaults(func=cmd_list)
+
+    serve = sub.add_parser("serve", help="run the web UI (see spec/web.md)")
+    serve.add_argument("--host", default="127.0.0.1", help="address to bind (default: 127.0.0.1)")
+    serve.add_argument("--port", type=int, default=8000, help="port to bind (default: 8000)")
+    serve.add_argument(
+        "--db", type=Path, default=None,
+        help="SQLite database path (default: $SKILL_ATLAS_DB or ~/.skill-atlas/atlas.db)",
+    )
+    serve.add_argument("--no-store", action="store_true", help="do not write results to the database")
+    serve.add_argument(
+        "--allow-local", action="store_true",
+        help="also accept non-https:// repository URLs such as file:// (unsafe on a shared host)",
+    )
+    serve.set_defaults(func=cmd_serve)
     return p
 
 

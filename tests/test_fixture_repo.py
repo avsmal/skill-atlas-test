@@ -99,6 +99,14 @@ def test_claude_copy_deduplicated_into_agents(scanned, dropped, kept):
     assert kept in paths
 
 
+def test_kept_skill_lists_its_merged_copies(scanned):
+    expected: dict[str, list[str]] = {}
+    for dropped, kept in sorted(EXPECTED["deduplicated"].items()):
+        expected.setdefault(kept, []).append(dropped)
+    actual = {s.path: list(s.duplicates) for s in scanned[0] if s.duplicates}
+    assert actual == expected
+
+
 def test_duplicate_names_across_prefixes_are_kept(scanned):
     pdf_paths = [s.path for s in scanned[0] if s.name == "pdf"]
     assert pdf_paths == [

@@ -9,7 +9,9 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
+from urllib.parse import quote
 
+_GITHUB_REPO = re.compile(r"^https://github\.com/[\w.-]+/[\w.-]+$")
 _SHORTHAND = re.compile(r"^[\w.-]+/[\w.-]+$")
 # gitignore-style patterns (non-cone sparse checkout) for rule (a) in spec/cli.md:
 # <prefix>/.agents|.claude/skills/<skill-dir>/SKILL.md, file name in any case.
@@ -40,6 +42,13 @@ def normalize_repo_url(url: str) -> str:
     if m:
         return f"https://github.com/{m.group(1)}/{m.group(2)}"
     return url
+
+
+def github_blob_url(repo: str, commit: str, path: str) -> str | None:
+    """Link to ``path`` at ``commit`` on GitHub, or None if ``repo`` isn't a GitHub repository."""
+    if not _GITHUB_REPO.match(repo):
+        return None
+    return f"{repo}/blob/{commit}/{quote(path, safe='/')}"
 
 
 def _git(*args: str, cwd: Path | None = None) -> str:
