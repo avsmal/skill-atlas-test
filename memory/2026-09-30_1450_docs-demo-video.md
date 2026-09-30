@@ -20,7 +20,13 @@
   GitHub strips `<video>` tags, and only its own upload attachments (which `gh` can't create)
   play inline, but animated images from the repo render.
 
+- PR description follows `.github/pull_request_template.md` (user feedback: the first version
+  didn't). The GIF/MP4 links in it are pinned to a commit SHA, not the branch, so they keep
+  working after the branch is deleted.
+
 ## Context
+- The session loaded `AGENTS.md` from before PR #12 (template rule), so the PR was first opened
+  without the template. After `git switch -c … origin/main`, re-read `AGENTS.md` from the new branch.
 - Clone times vary a lot: kotlin took 4 s once and 20–34 s later.
 - Something else was listening on port 8000 on the user's machine; the recording used 8766.
 - MPS (41 skills) and intellij-community (38 skills, plus 38 `.agents`/`.claude` "copies differ"
