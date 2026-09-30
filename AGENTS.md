@@ -17,5 +17,7 @@ Integration tests for every case in the spec.
 - Memory file for this PR is committed
 ## Shared memory
 - Read `memory/` before starting a task.
-- After opening the PR, add `memory/YYYY-MM-DD_HHMM_<branch>.md` (PR open time in UTC, `/` in the branch → `-`) to the same branch and push: what was asked, what was decided, and why. Don't edit other agents' memory files.
+- After opening the PR, add `memory/YYYY-MM-DD_HHMM_<branch>.md` (PR open time in UTC, `/` in the branch → `-`) to the same branch and push: what was asked, what was decided, and why. Don't edit other agents' memory files, except to remove stale records.
+- Remove every stale record (contradicted by the current code/spec or superseded by a later decision) from `memory/`, including ones your change makes stale.
+- Step-by-step guide: `.claude/skills/shared-memory/SKILL.md`.
 - If a PR is rejected or gets review feedback, record the problem and the lesson in `memory/` in a new branch and PR (a rejected branch never reaches `main`).

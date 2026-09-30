@@ -27,7 +27,22 @@ cat memory/notes.md             # how the user works
 Then read the files whose branch names relate to the task, plus the latest few. Treat them as
 background: if a memory names a file, flag or function, check it still exists before relying on it.
 
-## 2. After `gh pr create`: add the PR's memory file
+## 2. Remove stale records
+
+Memory must describe the project as it is. A record is **stale** when it is contradicted by the
+current code, `spec/` or `main` (renamed option, removed feature, changed rule), or superseded by a
+later decision. Every stale record you find, and every one your change makes stale, must be removed:
+
+- Delete the stale lines, or the whole file if nothing in it is still true. Don't leave
+  "outdated" markers or strike-throughs; git history keeps the old text.
+- This applies to any file in `memory/`, including other agents' files and `notes.md`: it is the
+  one exception to "don't edit other agents' memory files".
+- Remove only what is actually false now. History that is still accurate ("PR #1 merged too
+  early, follow-ups landed in PR #2") is not stale.
+- Do it on your task branch, and list what was removed and why under *Stale records removed*
+  in your PR's memory file.
+
+## 3. After `gh pr create`: add the PR's memory file
 
 The file name needs the PR open time, so it's written after the PR exists, on the **same branch**:
 
@@ -57,22 +72,26 @@ Template (match the existing files):
 
 ## Context
 - Optional: environment quirks, surprises, things the next agent would otherwise rediscover.
+
+## Stale records removed
+- Optional: `<file>`: what was removed and why it was no longer true.
 ```
 
 Commit it (`git add memory/<file>`), push, and wait for CI again: the memory file is part of the
 definition of done. Only stage your own file; other uncommitted changes in the tree are not yours.
 
-## 3. Rules
+## 4. Rules
 
-- **Don't edit other agents' memory files.** If one is wrong or outdated, say so in your own file
-  (link it with a relative link, e.g. `[PR #5 notes](2026-09-30_1109_feature-web-design.md)`).
-- `memory/notes.md` is shared: append a dated section, don't rewrite others' sections.
+- **Don't edit other agents' memory files**, except to remove stale records (step 2). To refer
+  to one, use a relative link, e.g. `[PR #5 notes](2026-09-30_1109_feature-web-design.md)`.
+- `memory/notes.md` is shared: append a dated section, don't rewrite others' sections (again,
+  except to remove stale records).
 - Keep it short and factual. No secrets, tokens or personal data.
 - Don't duplicate what the diff, spec or commit messages already say; record the *why*.
 - More pushes to the same PR after the file exists (e.g. follow-up requests): update your own
   file in the same branch.
 
-## 4. PR rejected or review feedback
+## 5. PR rejected or review feedback
 
 A rejected branch never reaches `main`, so its memory file would be lost. Record the lesson on a
 **new** branch and PR from `origin/main`:
@@ -81,11 +100,11 @@ A rejected branch never reaches `main`, so its memory file would be lost. Record
 git switch -c docs/memory-<short-topic> origin/main
 ```
 
-Add `memory/YYYY-MM-DD_HHMM_<new-branch>.md` (as in step 2, for the new PR) with: the original
+Add `memory/YYYY-MM-DD_HHMM_<new-branch>.md` (as in step 3, for the new PR) with: the original
 PR link, what the feedback or rejection was, the lesson, and how to apply it next time. If the
 lesson is a standing preference, also add it to `memory/notes.md`.
 
-## 5. Discussion without a PR
+## 6. Discussion without a PR
 
 Add a dated section to `memory/notes.md` (topic, time in UTC, branch if any, what was concluded)
 and commit it with the next PR you open, or on its own `docs/memory-<topic>` branch.
