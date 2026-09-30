@@ -109,6 +109,34 @@ def test_no_skills(serve, tmp_path):
     assert output_text(body).endswith("\n\nNo skills found")
 
 
+def test_skill_filter_present_when_skills(serve, fixture_repo):
+    _, body = serve()(scan_url(fixture_repo.as_uri()))
+    assert '<input type="search" class="term__filter-input" data-filter hidden' in body
+    assert 'placeholder="Filter skills…"' in body
+    assert '<span class="skill" data-name="pdf" data-desc="Work with PDF files">' in body
+    assert '<span class="skill" data-name="review" data-desc="Review code carefully">' in body
+    assert '<p class="term__empty" data-filter-empty hidden>No matching skills.</p>' in body
+    # filtering doesn't change the plain-text output
+    assert "2. pdf" in output_text(body)
+
+
+def test_skill_filter_absent_without_skills(serve, tmp_path):
+    repo = make_repo(tmp_path / "empty", {})
+    _, body = serve()(scan_url(repo.as_uri()))
+    assert '<div class="term__filter">' not in body
+    assert '<p class="term__empty"' not in body
+    assert '<input type="search"' not in body
+
+
+def test_skill_filter_escapes_name_and_description(serve, tmp_path):
+    repo = make_repo(tmp_path / "xss", {
+        ".claude/skills/x/SKILL.md": skill_md("<script>alert(1)</script>", "a & <b>"),
+    })
+    _, body = serve()(scan_url(repo.as_uri()))
+    assert 'data-name="&lt;script&gt;alert(1)&lt;/script&gt;"' in body
+    assert 'data-desc="a &amp; &lt;b&gt;"' in body
+
+
 def test_html_is_escaped(serve, tmp_path):
     repo = make_repo(tmp_path / "xss", {
         ".claude/skills/x/SKILL.md": skill_md("<script>alert(1)</script>", "a & <b>"),
@@ -311,6 +339,7 @@ def test_stored_zero_skill_repo(serve, tmp_path):
     assert status == 200
     assert output_text(body) == "No skills stored"
     assert "/similar?" not in body  # no skills, so nothing to link
+    assert '<input type="search"' not in body  # nothing to filter
 
 
 def test_stored_page_links_names_to_similar_skills(serve, tmp_path):
@@ -321,6 +350,15 @@ def test_stored_page_links_names_to_similar_skills(serve, tmp_path):
         assert f'<a href="{href}"><span class="bold cyan">{name}</span></a>' in body
     # the linked name is still the same plain text as the CLI output — no separate list
     assert output_text(body).count("Similar skills") == 0
+
+
+def test_stored_skill_filter_present(serve, fixture_repo):
+    get = serve()
+    url = fixture_repo.as_uri()
+    get(scan_url(url))
+    _, body = get("/stored?repo=" + quote(url, safe=""))
+    assert '<input type="search" class="term__filter-input" data-filter hidden' in body
+    assert 'data-name="pdf" data-desc="Work with PDF files"' in body
 
 
 def test_stored_unknown_repo_is_404(serve, tmp_path):
@@ -434,16 +472,18 @@ def test_scan_page_title_and_command(serve, fixture_repo):
     assert f"$</span> skill-atlas scan {fixture_repo.as_uri()}" in body
 
 
-def test_every_page_has_exactly_one_input(serve, fixture_repo, tmp_path):
+def test_every_page_has_the_repo_input_and_a_filter_only_with_skills(serve, fixture_repo, tmp_path):
     get = serve()
     url = fixture_repo.as_uri()
-    pages = [
-        "/", scan_url(url), "/stored?repo=" + quote(url, safe=""), "/stored?repo=x/y", "/nope",
-        similar_url(url, ".claude/skills/pdf/SKILL.md"),
+    # fixture_repo has skills, so its scan/stored pages also carry the JS-only skill filter input
+    pages_with_skills = [scan_url(url), "/stored?repo=" + quote(url, safe="")]
+    pages_without = [
+        "/", "/stored?repo=x/y", "/nope", similar_url(url, ".claude/skills/pdf/SKILL.md"),
     ]
-    for path in pages:
+    for path in pages_with_skills + pages_without:
         _, body = get(path)
-        assert len(re.findall(r"<input\b", body)) == 1, path
+        expected = 2 if path in pages_with_skills else 1
+        assert len(re.findall(r"<input\b", body)) == expected, path
         assert 'name="repo"' in body
         # no external assets: scripts, styles and the icon are inline
         assert not re.search(r"<script[^>]+src=|<link[^>]+stylesheet", body), path

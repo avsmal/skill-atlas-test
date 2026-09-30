@@ -57,6 +57,7 @@ def render_skills(
     show_source: bool = False,
     width: int | None = None,
     name_url: Callable[[Skill], str | None] | None = None,
+    wrap: Callable[[Skill, str], str] | None = None,
 ) -> str:
     """Numbered entries, one field per line; long descriptions are wrapped.
 
@@ -64,6 +65,9 @@ def render_skills(
     entries may come from several repositories). ``name_url(skill)``, when given, links
     each skill's name (used by the web UI's *Similar skills*; the terminal ignores it, like
     the path's GitHub link).
+
+    ``wrap``, if given, wraps each skill's rendered block (used by the web UI to
+    attach a searchable container around it without changing the plain text).
     """
     if width is None:
         width = shutil.get_terminal_size((100, 24)).columns
@@ -97,7 +101,13 @@ def render_skills(
             lines += field("repo", s.repo, "blue")
             lines += field("commit", s.commit, "magenta")
         blocks.append("\n".join(lines))
-    return "\n\n".join(blocks)
+    if wrap is None:
+        return "\n\n".join(blocks)
+    last = len(blocks) - 1
+    return "".join(
+        wrap(s, block if i == last else block + "\n\n")
+        for i, (s, block) in enumerate(zip(skills, blocks))
+    )
 
 
 def render_header(repo: str, commit: str, paint: Painter) -> str:
@@ -110,11 +120,12 @@ def render_list(
     *,
     width: int | None = None,
     name_url: Callable[[Skill], str | None] | None = None,
+    wrap: Callable[[Skill, str], str] | None = None,
 ) -> str:
     """What ``skill-atlas list`` prints: entries with their repo and commit, then a summary."""
     if not skills:
         return paint("No skills stored", "yellow")
-    entries = render_skills(skills, paint, show_source=True, width=width, name_url=name_url)
+    entries = render_skills(skills, paint, show_source=True, width=width, name_url=name_url, wrap=wrap)
     return f"{entries}\n\n{paint(f'{len(skills)} skill(s) stored', 'bold', 'green')}"
 
 

@@ -45,8 +45,10 @@ class HtmlPainter(Painter):
 
 # --- Output (the <pre> text, identical to the CLI) -------------------------------------
 
-def run_scan(repo_input: str, db: Path, *, store: bool, allow_local: bool) -> tuple[HTTPStatus, str]:
-    """Scan ``repo_input``; return the status and the HTML for the ``<pre>`` block."""
+def run_scan(
+    repo_input: str, db: Path, *, store: bool, allow_local: bool,
+) -> tuple[HTTPStatus, str, int]:
+    """Scan ``repo_input``; return the status, the HTML for the ``<pre>`` block, and the skill count."""
     from .cli import scan_repo  # imported lazily: cli imports this module for `serve`
 
     paint = HtmlPainter()
@@ -55,25 +57,27 @@ def run_scan(repo_input: str, db: Path, *, store: bool, allow_local: bool) -> tu
     def warn(msg: str) -> None:
         lines.append(f"{paint('warning:', 'bold', 'yellow')} {paint(msg)}")
 
-    def error(msg: str) -> str:
+    def error(msg: str) -> tuple[str, int]:
         lines.append(f"{paint('error:', 'bold', 'red')} {paint(msg)}")
-        return "\n".join(lines)
+        return "\n".join(lines), 0
 
     if not allow_local and not normalize_repo_url(repo_input).startswith("https://"):
-        return HTTPStatus.BAD_REQUEST, error(NOT_ALLOWED)
+        text, count = error(NOT_ALLOWED)
+        return HTTPStatus.BAD_REQUEST, text, count
     try:
         repo, commit, skills = scan_repo(repo_input, warn=warn)
-    except RepoError as e:
-        return HTTPStatus.BAD_GATEWAY, error(str(e))
+    except RepoError as exc:
+        text, count = error(str(exc))
+        return HTTPStatus.BAD_GATEWAY, text, count
     if store:
         with Store(db) as s:
             s.replace_repo(repo, skills, commit)
 
     lines += [render_header(repo, commit, paint), ""]
     if skills:
-        lines += [render_skills(skills, paint, width=WIDTH), ""]
+        lines += [render_skills(skills, paint, width=WIDTH, wrap=_skill_wrap), ""]
     lines.append(render_summary(len(skills), paint))
-    return HTTPStatus.OK, "\n".join(lines)
+    return HTTPStatus.OK, "\n".join(lines), len(skills)
 
 
 # --- Pages ------------------------------------------------------------------------------
@@ -84,6 +88,11 @@ def e(text: object) -> str:
 
 def display_repo(repo: str) -> str:
     return github_slug(repo) or repo
+
+
+def _skill_wrap(skill: Skill, block: str) -> str:
+    """Wraps a rendered skill block for the client-side name/description filter."""
+    return f'<span class="skill" data-name="{e(skill.name)}" data-desc="{e(skill.description)}">{block}</span>'
 
 
 def stored_url(repo: str) -> str:
@@ -128,15 +137,24 @@ def _form(value: str = "", *, hero: bool = False) -> str:
 </form>"""
 
 
-def _terminal(command: str, output: str, *, failed: bool = False) -> str:
+def _terminal(command: str, output: str, *, failed: bool = False, filterable: bool = False) -> str:
     cls = "term term--failed" if failed else "term"
+    filter_field = f"""
+  <div class="term__filter">
+    {_ICON_SEARCH}
+    <input type="search" class="term__filter-input" data-filter hidden
+           placeholder="Filter skills…" aria-label="Filter skills by name or description">
+  </div>""" if filterable else ""
+    empty_note = (
+        '\n  <p class="term__empty" data-filter-empty hidden>No matching skills.</p>' if filterable else ""
+    )
     return f"""<section class="{cls}" aria-label="Output">
   <div class="term__bar">
     <span class="term__dots" aria-hidden="true"><i></i><i></i><i></i></span>
     <code class="term__cmd"><span class="term__prompt">$</span> {e(command)}</code>
     <button type="button" class="term__copy" data-copy hidden>Copy</button>
-  </div>
-  <pre class="output">{output}</pre>
+  </div>{filter_field}
+  <pre class="output">{output}</pre>{empty_note}
 </section>"""
 
 
@@ -225,11 +243,16 @@ def render_home(entries: list[RepoEntry], *, store: bool) -> str:
     return _layout("skill-atlas", body, repo_count=len(entries))
 
 
-def render_scan(repo_input: str, status: HTTPStatus, output: str, *, repo_count: int) -> str:
+def render_scan(
+    repo_input: str, status: HTTPStatus, output: str, *, repo_count: int, skill_count: int,
+) -> str:
     repo = normalize_repo_url(repo_input)
     title = f"{display_repo(repo)} · skill-atlas" if status == HTTPStatus.OK else "skill-atlas"
     body = f"""{_form(repo_input)}
-{_terminal(f"skill-atlas scan {shlex.quote(repo_input)}", output, failed=status != HTTPStatus.OK)}"""
+{_terminal(
+        f"skill-atlas scan {shlex.quote(repo_input)}", output,
+        failed=status != HTTPStatus.OK, filterable=skill_count > 0,
+    )}"""
     return _layout(title, body, repo_count=repo_count)
 
 
@@ -255,7 +278,7 @@ def render_stored(entry: RepoEntry, output: str, *, repo_count: int) -> str:
     </div>
   </div>
 </section>
-{_terminal(f"skill-atlas list --repo {shlex.quote(entry.repo)}", output)}"""
+{_terminal(f"skill-atlas list --repo {shlex.quote(entry.repo)}", output, filterable=entry.skills > 0)}"""
     return _layout(f"{shown} · skill-atlas", body, repo_count=repo_count)
 
 
@@ -328,8 +351,10 @@ class Handler(BaseHTTPRequestHandler):
         if not repo_input:
             self._send(HTTPStatus.OK, render_home(self._repos(), store=self.store))
             return
-        status, output = run_scan(repo_input, self.db, store=self.store, allow_local=self.allow_local)
-        self._send(status, render_scan(repo_input, status, output, repo_count=len(self._repos())))
+        status, output, skill_count = run_scan(repo_input, self.db, store=self.store, allow_local=self.allow_local)
+        self._send(status, render_scan(
+            repo_input, status, output, repo_count=len(self._repos()), skill_count=skill_count,
+        ))
 
     def _stored(self, repo_input: str) -> None:
         entries = self._repos()
@@ -345,7 +370,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         with Store(self.db) as s:
             skills = s.list(repo)
-        output = render_list(skills, HtmlPainter(), width=WIDTH, name_url=lambda sk: similar_url(sk.repo, sk.path))
+        output = render_list(
+            skills, HtmlPainter(), width=WIDTH,
+            name_url=lambda sk: similar_url(sk.repo, sk.path), wrap=_skill_wrap,
+        )
         self._send(HTTPStatus.OK, render_stored(entry, output, repo_count=len(entries)))
 
     def _similar(self, repo_input: str, path: str) -> None:
@@ -502,6 +530,16 @@ main.wrap { padding-top: 32px; padding-bottom: 48px; }
 .term__copy { flex: none; font: 12px/1 system-ui, sans-serif; color: #c0c6d1; background: transparent;
               border: 1px solid var(--term-border); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
 .term__copy:hover { background: #222834; }
+.term__filter { display: flex; align-items: center; gap: 8px; padding: 8px 12px; position: relative;
+                background: var(--term-bar); border-bottom: 1px solid var(--term-border); color: #9aa3b2; }
+.term__filter .scan__icon { position: static; flex: none; }
+.term__filter-input { flex: 1; min-width: 0; height: 30px; padding: 0 10px; font: 13px var(--mono);
+                       color: var(--term-fg); background: var(--term-bg); border: 1px solid var(--term-border);
+                       border-radius: 6px; outline: none; }
+.term__filter-input:focus { border-color: var(--accent); }
+.term__filter-input::placeholder { color: #6b7280; }
+.skill--hidden { display: none; }
+.term__empty { margin: 0; padding: 4px 20px 18px; color: var(--muted); font: 13px var(--mono); }
 .output { margin: 0; padding: 18px 20px; overflow-x: auto; color: var(--term-fg); tab-size: 4;
           font: 13px/1.55 var(--mono); }
 .output a { color: inherit; text-decoration: underline; text-decoration-color: rgba(158, 206, 106, .35);
@@ -584,6 +622,22 @@ _JS = """
     document.body.classList.remove('is-loading');
     const b = form && form.querySelector('button');
     if (b) { b.disabled = false; b.textContent = 'Scan'; }
+  });
+  document.querySelectorAll('[data-filter]').forEach(input => {
+    const term = input.closest('.term');
+    const skills = term.querySelectorAll('.skill');
+    const empty = term.querySelector('[data-filter-empty]');
+    input.hidden = false;
+    input.addEventListener('input', () => {
+      const q = input.value.trim().toLowerCase();
+      let visible = 0;
+      skills.forEach(el => {
+        const match = !q || el.dataset.name.toLowerCase().includes(q) || el.dataset.desc.toLowerCase().includes(q);
+        el.classList.toggle('skill--hidden', !match);
+        if (match) visible++;
+      });
+      if (empty) empty.hidden = visible > 0;
+    });
   });
   document.querySelectorAll('[data-copy]').forEach(btn => {
     if (!navigator.clipboard) return;

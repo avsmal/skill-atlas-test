@@ -80,14 +80,16 @@ The `<title>` is `skill-atlas` on the home page and `<owner>/<name> · skill-atl
 
 The form, with the input filled in, then the output panel (see *Output*). The panel's title bar
 shows the equivalent command, `$ skill-atlas scan <repo>`, and a **Copy** button that copies the
-output text.
+output text. When the scan found at least one skill, the panel also has a **filter field** (see
+*Skill filter*).
 
 ### Stored repository (`/stored?repo=<repo>`)
 
 The scan form (empty), then the repository name, a summary line (skill count, commit, scan time,
 and a *View on GitHub* link for GitHub repositories), a **Rescan** link to
 `/?repo=<repo>`, and an output panel whose text is exactly what
-`skill-atlas list --repo <repo> --color never` prints. The title bar shows that command.
+`skill-atlas list --repo <repo> --color never` prints. The title bar shows that command. As on the
+scan result page, the panel has a filter field when the repository has at least one stored skill.
 
 Each skill's **name**, in the output panel, links to
 `/similar?repo=<repo>&path=<path of that skill>` — see *Similar skills* below. Unlike the path's
@@ -113,8 +115,10 @@ used by `/stored` for an unknown repository, offering to scan `repo` when one wa
 - System UI font for text; monospace for the output, commits, and paths.
 - Layout works from 360 px wide up; the output panel scrolls horizontally instead of wrapping.
 - Keyboard: the input is focused on the home page; `/` focuses it from anywhere on the page.
-- Every page has exactly one `<input>`: the repository URL.
-- JavaScript is only an enhancement (Copy button, `/` shortcut, *Scanning…* state); every page works without it.
+- Every page has exactly one `<input>` for the repository URL. An output panel that lists at
+  least one skill also has a second, JS-only input: the skill filter (see *Skill filter*).
+- JavaScript is only an enhancement (Copy button, `/` shortcut, *Scanning…* state, skill filter);
+  every page works without it — the filter input is `hidden` until JS unhides it.
 - No external requests: fonts, CSS, JS and the icon are inline.
 
 ## Output
@@ -148,6 +152,21 @@ https://github.com/o/r @ c823f9e564fd
   (see below), the same way: the link text is just the name, so the `<pre>` text is unchanged.
   Unlike the path's GitHub link, it's an in-app link and doesn't open in a new tab.
 - All text taken from the repository (names, descriptions, paths), from the DB, and from the input is HTML-escaped.
+
+### Skill filter
+
+When an output panel lists at least one skill (the scan result and stored-repository pages),
+its title bar gains a text input, hidden until JavaScript runs, that narrows the list to skills
+whose **name or description** contains the typed text (case-insensitive substring match; an empty
+field shows everything). It filters only the numbered skill entries — the header line, the
+"N skill(s) found/stored" summary, and any `warning:`/`error:` lines are always shown.
+
+Each skill's rendered block is wrapped in a `<span class="skill" data-name="…" data-desc="…">`
+carrying its unescaped-for-matching name and description as HTML attributes; the wrapper adds no
+visible text, so the `<pre>` content is unaffected. Filtering toggles a `skill--hidden` class
+(`display: none`) on non-matching spans. When nothing matches, a "No matching skills." note below
+the `<pre>` is shown. There is no server round-trip: the full list is always rendered, and the
+filter only hides/shows elements already on the page.
 
 While a scan is running, the button shows *Scanning…* and is disabled.
 
@@ -194,10 +213,10 @@ web.py ──► cli.scan_repo() ──► (same pipeline as the CLI)
 
 | Module | Responsibility |
 |---|---|
-| `web.py` | `HtmlPainter` (a `Painter` that escapes HTML, emits `<span>`s, and renders `link()` as `<a>`), the page renderers (`render_home()`, `render_scan()`, `render_stored()`, `render_similar()`, `render_not_found()`), the request handler, and `make_server()` |
+| `web.py` | `HtmlPainter` (a `Painter` that escapes HTML, emits `<span>`s, and renders `link()` as `<a>`), `_skill_wrap()` (the `data-name`/`data-desc` wrapper for the skill filter), the page renderers (`render_home()`, `render_scan()`, `render_stored()`, `render_similar()`, `render_not_found()`), the request handler, and `make_server()` |
 | `store.py` | `Store.repos()`: one `RepoEntry(repo, commit, scanned_at, skills)` per repository, most recent first |
 | `output.py` | `Painter.link(text, url, *styles)`: plain styled text in the terminal; `render_skills()` passes each path's GitHub URL through it |
-| `output.py` | `render_list()`: the `list` output, shared by `skill-atlas list` and the stored-repository page |
+| `output.py` | `render_skills()` / `render_list()` take optional `name_url(skill)` (link the name, for *Similar skills*) and `wrap(skill, block)` (wrap each skill's block, for the filter) callbacks, used only by the web UI, without changing the CLI's plain-text output |
 | `repo.py` | `github_blob_url(repo, commit, path)`: the file's GitHub URL, or `None` for non-GitHub repos |
 | `similarity.py` | `find_similar(target, candidates, threshold)`: see *Similar skills* above |
 | `cli.py` | The `serve` subcommand. `scan_repo()` takes a `warn` callback so the web page can collect warnings instead of printing them |
@@ -227,4 +246,6 @@ row of the *HTTP interface* table, plus:
 - `/similar?repo=&path=`: results above 10% shown with name and one-decimal percentage, sorted descending;
   the target skill itself and skills at or below 10% are excluded; `404` for an unknown repo, an unknown path,
   or a missing parameter; links back to the skill's own repository and to each result's repository
-- the page `<title>` for home and repository pages, and exactly one `<input>` on every page
+- the page `<title>` for home and repository pages; the repository `<input>` is on every page, and
+  the filter `<input>` is present (`data-filter`, `hidden`) only when the output lists a skill and
+  absent for 0-skill scans/repositories; skill names/descriptions in `data-name`/`data-desc` are escaped
