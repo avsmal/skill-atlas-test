@@ -39,6 +39,8 @@
   - On macOS, two takes differed by 0 pixels (1 on the first frame).
   - A one-character footer change (`.` → `!`) changed 13 pixels, so a budget of 500 would have
     missed it.
+  - On CI, two runs of the baseline commit (36743922096 and its rerun) had 0 changed pixels on
+    every frame.
 - **CI job.** `demo-video` runs on `ubuntu-24.04`, only on `pull_request`, outside the OS matrix, and
   is skipped for Markdown-only changes like `pytest`.
   - It first checks that `tests/demo_frames` matches `docs/demo.mp4`.
@@ -53,6 +55,8 @@
   - ffmpeg comes from `imageio-ffmpeg` on PyPI (static, no ffprobe).
   - Chromium is installed with `playwright install chromium`, without `--with-deps`.
   - A 20-minute job timeout and an 8-minute install timeout are set.
+- The baseline came from the `demo-video` artifact of run 36743539416. Linux fonts wrap the home
+  headline onto two lines.
 - The workflow push still needs SSH, because the HTTPS token lacks the `workflow` scope.
 
 ## Stale records removed
