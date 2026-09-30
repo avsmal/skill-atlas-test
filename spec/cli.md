@@ -314,6 +314,10 @@ passing, so the PR still gets a green check. Markdown under `tests/` is fixture 
 tests. Manual runs, new branches and pushes whose base commit is unknown always run the tests.
 Per `AGENTS.md`, a change is done only when CI is green for its commit.
 
+On pull requests, a `demo-video` job (Ubuntu, once per run, skipped by the same rule) re-records
+`docs/demo.mp4` and compares screenshots at its key moments with `tests/demo_frames/`; any
+visible difference fails it. See [demo-video.md](demo-video.md).
+
 ## Future work
 
 - A GitHub API backend (Trees API + raw content) for environments without git.
