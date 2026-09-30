@@ -38,7 +38,7 @@ https://github.com/JetBrains/kotlin @ c823f9e564fd
 
 | Option | Commands | Meaning |
 |---|---|---|
-| `--json` | scan, list | Print a JSON array of `{repo, name, description, commit, path, duplicates}` instead of text |
+| `--json` | scan, list | Print a JSON array of `{repo, name, description, commit, path, duplicates, content}` instead of text |
 | `--color WHEN` | scan, list | `auto` (default), `always`, or `never`. See *Output format* |
 | `--db PATH` | scan, list | SQLite DB path. Default: `$SKILL_ATLAS_DB`, or `~/.skill-atlas/atlas.db` if unset |
 | `--ref REF` | scan | Branch or tag to scan (default: the remote's default branch) |
@@ -119,6 +119,9 @@ Projects often keep the same skill in both `.agents/skills/` (read by several ag
 
   - `name` — taken from the frontmatter. If it's missing, `<skill-dir>` is used.
   - `description` — taken from the frontmatter, with whitespace collapsed to single spaces (so multi-line YAML becomes one line). Empty if missing.
+  - `content` — everything after the closing `---`, whitespace-trimmed. Stored and included
+    in `--json` output, but not shown in the text output (which stays as documented in
+    *Output format* below); used to find similar skills (see *Similar skills* in [web.md](web.md)).
   - Files with no frontmatter or invalid frontmatter are skipped, with a `warning:` on stderr.
 
 ### Examples
@@ -191,7 +194,7 @@ cli.py ──► repo.py ──► discovery.py ──► parser.py ──► de
    │          sparse clone,                     matter)                     persistence)
    │          commit SHA)
    └──► output.py (numbered multi-line rendering, colors)
-                        models.Skill (repo, name, description, commit, path)
+                        models.Skill (repo, name, description, commit, path, content)
 ```
 
 | Module | Responsibility |
@@ -201,9 +204,10 @@ cli.py ──► repo.py ──► discovery.py ──► parser.py ──► de
 | `repo.py` | `normalize_repo_url()`. `clone()` is a context manager that clones into a temp dir, yields `(path, commit_sha)`, and deletes the temp dir afterwards |
 | `discovery.py` | `find_skill_files(root)`: sorted list of `SKILL.md` paths that pass the location (a) and exclusion (b) rules. Symlinks are reported separately |
 | `dedupe.py` | `dedupe(skills)`: applies rule c (merges `.agents`/`.claude` copies within a prefix, records the merged paths in `duplicates`, and warns when contents differ) |
-| `parser.py` | `parse_frontmatter()` and `parse_skill()` → `(name, description)`. Raises `SkillParseError` on bad input |
+| `parser.py` | `parse_frontmatter()` and `parse_skill()` → `(name, description, content)`. Raises `SkillParseError` on bad input |
 | `models.py` | The `Skill` dataclass |
 | `store.py` | The `Store` class: creates and migrates the schema, `replace_repo()`, `list()`, `repos()` |
+| `similarity.py` | `find_similar()`: skills similar to a given one, by description and content. See *Similar skills* in [web.md](web.md) |
 
 ### Fetching strategy
 
@@ -235,6 +239,7 @@ CREATE TABLE skills (
     description TEXT,
     commit_sha  TEXT NOT NULL,   -- full 40-char SHA that was scanned
     duplicates  TEXT NOT NULL DEFAULT '[]',  -- JSON array of merged .claude copy paths (rule c)
+    content     TEXT NOT NULL DEFAULT '',    -- SKILL.md body, after the frontmatter
     scanned_at  TEXT NOT NULL,   -- ISO-8601 UTC
     PRIMARY KEY (repo, path)
 );
@@ -249,8 +254,8 @@ CREATE TABLE repos (             -- one row per scanned repository, even with 0 
 `repos` is what the web catalogue lists (see [web.md](web.md)). A DB created before it existed gets it
 filled from `skills` when it is opened (repositories whose scan found 0 skills can't be recovered).
 
-A DB created before the `duplicates` column existed gets it added (`ALTER TABLE`) when it is opened;
-old rows read back with no duplicates until the repository is rescanned.
+A DB created before the `duplicates` or `content` column existed gets it added (`ALTER TABLE`) when it
+is opened; old rows read back with no duplicates and/or empty content until the repository is rescanned.
 
 The key is `(repo, path)` rather than `(repo, name)`, because two skills in one repository can share a name.
 A scan replaces **all** rows for its repository and upserts its `repos` row in a single transaction. Rescanning

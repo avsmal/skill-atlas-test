@@ -10,17 +10,20 @@ class SkillParseError(Exception):
     pass
 
 
-def parse_frontmatter(text: str) -> dict:
+def _split_frontmatter(text: str) -> tuple[str, str]:
+    """Return ``(yaml block, body)``; the body is everything after the closing ``---``."""
     text = text.lstrip("﻿")
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
         raise SkillParseError("missing YAML frontmatter")
     for i, line in enumerate(lines[1:], start=1):
         if line.strip() == "---":
-            block = "\n".join(lines[1:i])
-            break
-    else:
-        raise SkillParseError("unterminated YAML frontmatter")
+            return "\n".join(lines[1:i]), "\n".join(lines[i + 1:])
+    raise SkillParseError("unterminated YAML frontmatter")
+
+
+def parse_frontmatter(text: str) -> dict:
+    block, _ = _split_frontmatter(text)
     try:
         data = yaml.safe_load(block) or {}
     except yaml.YAMLError as e:
@@ -39,9 +42,14 @@ def _describe_yaml_error(e: yaml.YAMLError) -> str:
     return f"{problem} (line {mark.line + 2})" if mark else problem
 
 
-def parse_skill(path: Path) -> tuple[str, str]:
-    """Return ``(name, description)``; name falls back to the parent dir."""
-    data = parse_frontmatter(path.read_text(encoding="utf-8", errors="replace"))
+def parse_skill(path: Path) -> tuple[str, str, str]:
+    """Return ``(name, description, content)``; name falls back to the parent dir.
+
+    ``content`` is the file's body, after the YAML frontmatter, whitespace-trimmed.
+    """
+    text = path.read_text(encoding="utf-8", errors="replace")
+    data = parse_frontmatter(text)
+    _, body = _split_frontmatter(text)
     name = str(data.get("name") or path.parent.name).strip()
     description = " ".join(str(data.get("description") or "").split())
-    return name, description
+    return name, description, body.strip()

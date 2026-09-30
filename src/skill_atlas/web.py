@@ -13,9 +13,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 
-from .models import RepoEntry
+from .models import RepoEntry, Skill
 from .output import Painter, render_header, render_list, render_skills, render_summary
 from .repo import RepoError, github_slug, normalize_repo_url
+from .similarity import DEFAULT_THRESHOLD, find_similar
 from .store import Store
 
 WIDTH = 100
@@ -90,6 +91,10 @@ def stored_url(repo: str) -> str:
 
 def scan_url(repo: str) -> str:
     return "/?repo=" + quote(repo, safe="")
+
+
+def similar_url(repo: str, path: str) -> str:
+    return f"/similar?repo={quote(repo, safe='')}&path={quote(path, safe='')}"
 
 
 def format_time(iso: str) -> str:
@@ -227,7 +232,23 @@ def render_scan(repo_input: str, status: HTTPStatus, output: str, *, repo_count:
     return _layout(title, body, repo_count=repo_count)
 
 
-def render_stored(entry: RepoEntry, output: str, *, repo_count: int) -> str:
+def _skills_index(skills: list[Skill]) -> str:
+    """The per-skill "Similar skills" links, outside the output panel (see spec/web.md)."""
+    if not skills:
+        return ""
+    rows = "".join(f"""<li><a class="repo" href="{e(similar_url(s.repo, s.path))}">
+    <span class="repo__title"><span class="repo__name">{e(s.name)}</span></span>
+    <span class="repo__meta">Similar skills</span>
+  </a></li>""" for s in skills)
+    return f"""<section class="skills-index">
+  <div class="section-head"><h2>Skills</h2></div>
+  <ul class="repo-list">
+  {rows}
+  </ul>
+</section>"""
+
+
+def render_stored(entry: RepoEntry, skills: list[Skill], output: str, *, repo_count: int) -> str:
     shown = display_repo(entry.repo)
     github = (
         f'<a class="btn btn--ghost" href="{e(entry.repo)}" target="_blank" rel="noopener">View on GitHub</a>'
@@ -249,8 +270,37 @@ def render_stored(entry: RepoEntry, output: str, *, repo_count: int) -> str:
     </div>
   </div>
 </section>
-{_terminal(f"skill-atlas list --repo {shlex.quote(entry.repo)}", output)}"""
+{_terminal(f"skill-atlas list --repo {shlex.quote(entry.repo)}", output)}
+{_skills_index(skills)}"""
     return _layout(f"{shown} · skill-atlas", body, repo_count=repo_count)
+
+
+def render_similar(skill: Skill, results: list[tuple[Skill, float]], *, repo_count: int) -> str:
+    if results:
+        rows = "".join(f"""<li><a class="repo" href="{e(stored_url(other.repo))}">
+    <span class="repo__title"><span class="repo__name">{e(other.name)}</span></span>
+    <span class="repo__meta">
+      <span class="badge">{ratio * 100:.1f}%</span>
+      <span class="muted">{e(display_repo(other.repo))}</span>
+    </span>
+  </a></li>""" for other, ratio in results)
+        list_html = f'<ul class="repo-list">\n  {rows}\n  </ul>'
+    else:
+        list_html = f"""<div class="empty">
+  <p><strong>No similar skills found.</strong></p>
+  <p>No stored skill is more than {DEFAULT_THRESHOLD:.0%} similar.</p>
+</div>"""
+    body = f"""{_form()}
+<section class="repo-head">
+  <p class="crumbs"><a href="{e(stored_url(skill.repo))}">{e(display_repo(skill.repo))}</a> <span aria-hidden="true">/</span></p>
+  <h1>Similar to {e(skill.name)}</h1>
+  <p class="facts"><code>{e(skill.path)}</code></p>
+</section>
+<section class="similar">
+  <div class="section-head"><h2>Similar skills</h2></div>
+  {list_html}
+</section>"""
+    return _layout(f"Similar to {skill.name} · skill-atlas", body, repo_count=repo_count)
 
 
 def render_not_found(message: str, *, repo: str | None = None, repo_count: int) -> str:
@@ -277,11 +327,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         url = urlsplit(self.path)
-        repo_input = (parse_qs(url.query).get("repo") or [""])[0].strip()
+        query = parse_qs(url.query)
+        repo_input = (query.get("repo") or [""])[0].strip()
         if url.path == "/":
             self._index(repo_input)
         elif url.path == "/stored":
             self._stored(repo_input)
+        elif url.path == "/similar":
+            self._similar(repo_input, (query.get("path") or [""])[0])
         else:
             self._send(HTTPStatus.NOT_FOUND, render_not_found(
                 f"Page not found: {url.path}", repo_count=len(self._repos()),
@@ -309,7 +362,31 @@ class Handler(BaseHTTPRequestHandler):
         with Store(self.db) as s:
             skills = s.list(repo)
         output = render_list(skills, HtmlPainter(), width=WIDTH)
-        self._send(HTTPStatus.OK, render_stored(entry, output, repo_count=len(entries)))
+        self._send(HTTPStatus.OK, render_stored(entry, skills, output, repo_count=len(entries)))
+
+    def _similar(self, repo_input: str, path: str) -> None:
+        entries = self._repos()
+        if not repo_input or not path:
+            self._send(HTTPStatus.NOT_FOUND, render_not_found("No skill given.", repo_count=len(entries)))
+            return
+        repo = normalize_repo_url(repo_input)
+        entry = next((r for r in entries if r.repo == repo), None)
+        if entry is None:
+            self._send(HTTPStatus.NOT_FOUND, render_not_found(
+                f"{display_repo(repo)} isn't in the catalogue yet.", repo=repo, repo_count=len(entries),
+            ))
+            return
+        with Store(self.db) as s:
+            skill = next((sk for sk in s.list(repo) if sk.path == path), None)
+        if skill is None:
+            self._send(HTTPStatus.NOT_FOUND, render_not_found(
+                f"{path} isn't a stored skill of {display_repo(repo)}.", repo=repo, repo_count=len(entries),
+            ))
+            return
+        with Store(self.db) as s:
+            candidates = s.list()
+        results = find_similar(skill, candidates)
+        self._send(HTTPStatus.OK, render_similar(skill, results, repo_count=len(entries)))
 
     def _repos(self) -> list[RepoEntry]:
         # Don't create a DB just to show an empty catalogue (--no-store must leave no file behind).
@@ -486,6 +563,8 @@ main.wrap { padding-top: 32px; padding-bottom: 48px; }
 .facts { margin: 0; display: flex; align-items: center; gap: 6px 14px; flex-wrap: wrap; color: var(--muted); font-size: 14px; }
 .facts code { color: var(--text); }
 .actions { display: flex; gap: 8px; }
+
+.skills-index, .similar { margin-top: 32px; }
 
 .footer { margin: 0; color: var(--muted); font-size: 13px; padding: 20px 0 32px; border-top: 1px solid var(--border); }
 

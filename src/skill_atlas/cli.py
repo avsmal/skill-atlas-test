@@ -29,11 +29,11 @@ def scan_repo(
         for path in found.files:
             rel = path.relative_to(root).as_posix()
             try:
-                name, description = parse_skill(path)
+                name, description, content = parse_skill(path)
             except (SkillParseError, OSError) as e:
                 warn(f"skipping {rel}: {e}")
                 continue
-            skills.append(Skill(repo, name, description, commit, rel))
+            skills.append(Skill(repo, name, description, commit, rel, content=content))
         skills = dedupe(skills, read=lambda rel: (root / rel).read_bytes(), warn=warn)
     return repo, commit, skills
 

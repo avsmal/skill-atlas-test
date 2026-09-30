@@ -12,6 +12,8 @@ class Skill:
     path: str
     # paths of .claude copies merged into this skill by rule (c), in path order
     duplicates: tuple[str, ...] = ()
+    # the SKILL.md body, after the YAML frontmatter; used for similarity (see spec/web.md)
+    content: str = ""
 
     def to_dict(self) -> dict:
         return {**asdict(self), "duplicates": list(self.duplicates)}

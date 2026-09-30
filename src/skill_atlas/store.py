@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS skills (
     description TEXT,
     commit_sha  TEXT NOT NULL,
     duplicates  TEXT NOT NULL DEFAULT '[]',
+    content     TEXT NOT NULL DEFAULT '',
     scanned_at  TEXT NOT NULL,
     PRIMARY KEY (repo, path)
 );
@@ -51,6 +52,9 @@ class Store:
         if "duplicates" not in columns:  # DB created before the column existed
             with self.conn:
                 self.conn.execute("ALTER TABLE skills ADD COLUMN duplicates TEXT NOT NULL DEFAULT '[]'")
+        if "content" not in columns:  # DB created before the column existed
+            with self.conn:
+                self.conn.execute("ALTER TABLE skills ADD COLUMN content TEXT NOT NULL DEFAULT ''")
         with self.conn:
             self.conn.execute(_BACKFILL_REPOS)
 
@@ -81,23 +85,26 @@ class Store:
             )
             self.conn.execute("DELETE FROM skills WHERE repo = ?", (repo,))
             self.conn.executemany(
-                "INSERT INTO skills (repo, path, name, description, commit_sha, duplicates, scanned_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO skills (repo, path, name, description, commit_sha, duplicates, content, scanned_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 [
-                    (s.repo, s.path, s.name, s.description, s.commit, json.dumps(list(s.duplicates)), now)
+                    (
+                        s.repo, s.path, s.name, s.description, s.commit,
+                        json.dumps(list(s.duplicates)), s.content, now,
+                    )
                     for s in skills
                 ],
             )
 
     def list(self, repo: str | None = None) -> list[Skill]:
-        sql = "SELECT repo, name, description, commit_sha, path, duplicates FROM skills"
+        sql = "SELECT repo, name, description, commit_sha, path, duplicates, content FROM skills"
         params: tuple = ()
         if repo:
             sql += " WHERE repo = ?"
             params = (repo,)
         sql += " ORDER BY repo, path"
         return [
-            Skill(*row[:5], tuple(json.loads(row[5])))
+            Skill(*row[:5], tuple(json.loads(row[5])), row[6])
             for row in self.conn.execute(sql, params)
         ]
 
