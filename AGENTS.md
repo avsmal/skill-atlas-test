@@ -8,7 +8,7 @@ Integration tests for every case in the spec.
 - Setup in a fresh clone/sandbox: `python -m venv .venv && . .venv/bin/activate && python -m pip install -e '.[dev]'`.
 - Other agents work on this repo in parallel: never push to `main` or to a branch you did not create.
 - If `git push` over SSH fails, switch to HTTPS: `git remote set-url origin https://github.com/avsmal/skill-atlas-test.git && gh auth setup-git`.
-- Open the PR with `gh pr create --base main --fill` (or a written title/body).
+- Open the PR with `gh pr create --base main --title "<title>" --body-file <file>`, the body following `.github/pull_request_template.md` (`--fill` skips the template).
 ## Definition of done
 - All tests pass locally
 - Pushed, PR open against `main`
