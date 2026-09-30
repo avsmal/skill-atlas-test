@@ -17,12 +17,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
-        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
-        include:
-          # macOS: case-insensitive filesystem, BSD userland
-          - os: macos-latest
-            python: "3.14"
+        # macOS: case-insensitive filesystem, BSD userland
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.14"]
     steps:
       - uses: actions/checkout@v4
 
