@@ -6,7 +6,8 @@ import pytest
 
 
 def _git(cwd, *args):
-    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+    # autocrlf off: keep CRLF fixtures byte-exact regardless of the user's global git config
+    subprocess.run(["git", "-c", "core.autocrlf=false", *args], cwd=cwd, check=True, capture_output=True)
 
 
 def skill_md(name: str | None = None, description: str = "", body: str = "Body\n") -> str:

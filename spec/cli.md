@@ -258,6 +258,17 @@ and the discovery rules are tested together:
 - case variants of the file name (`skill.md`, `Skill.md`) and near-misses (`SKILL.md.bak`, `skills.md`)
 - symlinked `SKILL.md` files and a symlinked `.claude/skills` directory
 
+Fixture repository (`tests/fixtures/edge-repo/`, tested by `tests/test_fixture_repo.py`):
+a checked-in tree that contains all the edge cases above at once. It is copied to a temp dir, committed, and
+scanned through `file://`. `tests/fixtures/edge-repo.expected.json` lists:
+- the skills, in the exact expected order
+- the exact warnings
+- which `.claude` copies were merged into which `.agents` skills
+- every ignored path, with the rule that excludes it
+
+A guard test fails if a fixture file isn't classified in that JSON. Another checks that the byte-level
+cases (CRLF, BOM, symlinks) survive: `tests/fixtures/.gitattributes` sets `-text`.
+
 ## Future work
 
 - A GitHub API backend (Trees API + raw content) for environments without git.
