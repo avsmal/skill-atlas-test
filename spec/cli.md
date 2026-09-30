@@ -307,6 +307,11 @@ cases (CRLF, BOM, symlinks) survive: `tests/fixtures/.gitattributes` sets `-text
 - macOS (case-insensitive filesystem) with Python 3.14
 
 Before the tests run, it checks that the fixture's symlinks and CRLF bytes survived the checkout.
+
+A `changes` job runs first. If every file changed by the push or pull request is Markdown (`*.md`)
+outside `tests/` (docs, `spec/`, `memory/`), the `pytest` jobs are skipped; a skipped job counts as
+passing, so the PR still gets a green check. Markdown under `tests/` is fixture data and runs the
+tests. Manual runs, new branches and pushes whose base commit is unknown always run the tests.
 Per `AGENTS.md`, a change is done only when CI is green for its commit.
 
 ## Future work

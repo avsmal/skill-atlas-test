@@ -11,8 +11,43 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Skip the tests when every changed file is Markdown outside tests/ (docs, spec, memory).
+  # Markdown under tests/ is fixture data (SKILL.md files) and still triggers them.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          case "$EVENT" in
+            pull_request) base=$(git merge-base "$PR_BASE" HEAD) ;;
+            push) base=$PUSH_BEFORE ;;
+            *) base= ;;
+          esac
+          # Manual runs, new branches and unknown bases: run the tests.
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "code=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          git diff --name-only "$base" HEAD | tee changed.txt
+          if grep -Ev '\.md$' changed.txt | grep -q . || grep -q '^tests/' changed.txt; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+
   pytest:
     name: pytest (${{ matrix.os }}, py${{ matrix.python }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
