@@ -14,4 +14,4 @@ skill-atlas serve                # web UI on http://127.0.0.1:8000/ (scan + cata
 ```
 
 See [spec/cli.md](spec/cli.md) for the architecture and the exact rules for what counts as a skill
-(excluded folders, `.agents`/`.claude` de-duplication), and [spec/web.md](spec/web.md) for the web UI ([demo video script](docs/demo-script.md)). Run the tests with `pip install -e '.[dev]' && pytest`.
+(excluded folders, `.agents`/`.claude` de-duplication), and [spec/web.md](spec/web.md) for the web UI ([30-second demo video](docs/demo.mp4), [demo video script](docs/demo-script.md)). Run the tests with `pip install -e '.[dev]' && pytest`.
