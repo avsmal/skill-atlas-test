@@ -110,8 +110,9 @@ used by `/stored` for an unknown repository, offering to scan `repo` when one wa
 
 ## Design
 
-- Light and dark themes follow the system (`prefers-color-scheme`). Colors are CSS custom properties.
-- The output panel always uses the dark terminal palette, in both themes, so the CLI colors read the same.
+- One dark-green theme, whatever the system theme: the page background is dark green (`--bg: #0f2a1d`),
+  with light text and green-tinted surfaces (`color-scheme: dark`). Colors are CSS custom properties.
+- The output panel uses its own dark terminal palette (not the page's green), so the CLI colors read the same.
 - System UI font for text; monospace for the output, commits, and paths.
 - Layout works from 360 px wide up; the output panel scrolls horizontally instead of wrapping.
 - Keyboard: the input is focused on the home page; `/` focuses it from anywhere on the page.
@@ -234,6 +235,7 @@ row of the *HTTP interface* table, plus:
   non-ASCII paths are percent-encoded, a duplicated skill shows and links both of its paths,
   and `file://` repos get no links
 - color spans are present (`<span class="bold cyan">`)
+- every page's background is dark green (`--bg: #0f2a1d`, `color-scheme: dark`) with no light-theme override
 - without `allow_local`, `file://`, non-GitHub `git@` and `-`-prefixed input get `400` and nothing is stored
 - results are stored in the DB, and not stored with `store=False`
 - catalogue: lists every scanned repository with its skill count, short commit and scan time,

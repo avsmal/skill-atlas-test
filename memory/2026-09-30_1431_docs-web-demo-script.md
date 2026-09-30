@@ -11,7 +11,7 @@
 
 ## What was decided / built
 - `docs/demo-script.md`: 8 scenes (hook, scan, GitHub links + shareable URL, filter, more repos via
-  `/`, catalogue + stored page, Similar skills, theme/mobile + outro), each with on-screen action
+  `/`, catalogue + stored page, Similar skills, mobile + outro), each with on-screen action
   and voice-over. Linked from README.
 - ideavim leads (6 skills, fast clone ~2 s); kotlin (6) and skill-atlas-test (1) fill the catalogue.
   Scene 7 uses ideavim's `extensions-api-migration`, whose top similar skill (18.8 %) is in kotlin —

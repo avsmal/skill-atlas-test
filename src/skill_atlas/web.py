@@ -445,19 +445,13 @@ _ICON_SEARCH = (
 
 _CSS = """
 :root {
-  --bg: #f6f6f3; --surface: #ffffff; --surface-2: #f0f0ec; --text: #1b1d22; --muted: #646a75;
-  --border: #e2e2dc; --accent: #5b5bd6; --accent-hover: #4a4ac4; --accent-fg: #ffffff;
-  --accent-soft: #ececfb; --focus: rgba(91, 91, 214, .35); --shadow: 0 1px 2px rgba(20, 20, 30, .05);
+  color-scheme: dark;
+  --bg: #0f2a1d; --surface: #153524; --surface-2: #1b3f2c; --text: #e6f0ea; --muted: #9bb3a5;
+  --border: #24503a; --accent: #6fd39a; --accent-hover: #8be0ad; --accent-fg: #0b2016;
+  --accent-soft: #1f4a33; --focus: rgba(111, 211, 154, .4); --shadow: none;
   --term-bg: #0f1218; --term-bar: #171b23; --term-border: #262b36; --term-fg: #d5d9e0;
   --radius: 10px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0c0e12; --surface: #13161c; --surface-2: #1a1e26; --text: #e7e9ee; --muted: #8d95a3;
-    --border: #252a33; --accent: #8e8ef5; --accent-hover: #a3a3f8; --accent-fg: #0c0e12;
-    --accent-soft: #1d1f38; --focus: rgba(142, 142, 245, .4); --shadow: none;
-  }
 }
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
@@ -517,7 +511,7 @@ main.wrap { padding-top: 32px; padding-bottom: 48px; }
 .is-loading .progress { visibility: visible; }
 @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
 
-/* terminal output: always the dark palette, so CLI colors read the same in both themes */
+/* terminal output: its own dark palette (not the page's green), so CLI colors read as in a terminal */
 .term { background: var(--term-bg); border: 1px solid var(--term-border); border-radius: var(--radius);
         overflow: hidden; box-shadow: 0 8px 24px rgba(10, 12, 20, .12); }
 .term__bar { display: flex; align-items: center; gap: 12px; padding: 0 12px; height: 40px;
