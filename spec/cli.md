@@ -32,6 +32,7 @@ https://github.com/JetBrains/kotlin @ c823f9e564fd
 |---|---|
 | `skill-atlas scan <repo>` | Clone the repo, find its skills, print them, and save them to the DB |
 | `skill-atlas list` | Print the skills saved in the DB |
+| `skill-atlas serve` | Run the web UI: one input field, the same output as `scan`. See [web.md](web.md) |
 
 ### Options
 
