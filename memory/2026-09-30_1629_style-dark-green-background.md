@@ -18,7 +18,9 @@
 - Spec `web.md` › *Design* and *Testing* updated; `docs/demo-script.md` outro no longer switches to light theme.
 
 ## Context
-- `docs/demo.mp4`/GIF/screenshots still show the old palette; re-record with the `record-demo` skill if wanted.
+- The first CI run failed `demo-video` (7 of 8 frames differ: the colour change, as expected). The
+  baseline (`docs/demo.mp4`, GIF, moments, `tests/demo_frames/`) was replaced from that run with
+  `scripts/demo/update-baseline.sh 36744676710` after checking the contact sheet showed only the new palette.
 
 ## Stale records removed
 - `2026-09-30_1027_feature-web-design.md`: "light/dark via `prefers-color-scheme`" — themes no longer follow the system.
