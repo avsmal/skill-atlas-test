@@ -225,9 +225,12 @@ class Demo:
         # One frame every 2.5 s, tiled: read this image to check every scene rendered.
         subprocess.run(ff + ["-i", str(d / "demo.mp4"), "-vf", "fps=1/2.5,scale=640:-1,tile=3x6",
                              "-frames:v", "1", str(d / "sheet.png")], check=True)
-        dur = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                              "-of", "csv=p=0", str(d / "demo.mp4")],
-                             capture_output=True, text=True).stdout.strip()
+        dur = "?"
+        if shutil.which("ffprobe"):  # CI's static ffmpeg comes without ffprobe
+            dur = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                                  "-of", "csv=p=0", str(d / "demo.mp4")],
+                                 capture_output=True, text=True).stdout.strip()
+            dur = f"{float(dur):.1f}"
         size = lambda f: f"{(d / f).stat().st_size / 1e6:.1f} MB"
-        print(f"demo.mp4 {float(dur):.1f} s, {size('demo.mp4')}; demo.gif {size('demo.gif')}; "
+        print(f"demo.mp4 {dur} s, {size('demo.mp4')}; demo.gif {size('demo.gif')}; "
               f"sheet.png; trimmed waits: {[(round(a, 1), round(b, 1)) for a, b in cuts]}")

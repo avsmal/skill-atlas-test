@@ -83,6 +83,7 @@ jobs:
     if: needs.changes.outputs.code == 'true' && github.event_name == 'pull_request'
     # Pinned image: fonts and system libraries change how the pages render.
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -92,14 +93,20 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
+      # No apt: its mirror stalled for 15+ minutes once. ffmpeg comes as a static binary from
+      # PyPI, and the runner image already has Chromium's system libraries.
       - name: Install
+        timeout-minutes: 8
         run: |
-          sudo apt-get update -q && sudo apt-get install -yq ffmpeg
-          python -m pip install -e '.[demo]'
-          python -m playwright install --with-deps chromium
+          python -m pip install -e '.[demo]' imageio-ffmpeg==0.6.0
+          mkdir -p "$HOME/.local/bin"
+          ln -sf "$(python -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')" "$HOME/.local/bin/ffmpeg"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          python -m playwright install chromium
 
       - name: Pin the demo repositories to the video's commits
         id: pin
+        timeout-minutes: 5
         run: |
           scripts/demo/pin-repos.sh "$RUNNER_TEMP/pins"
           echo "GIT_CONFIG_GLOBAL=$RUNNER_TEMP/pins/gitconfig" >> "$GITHUB_ENV"

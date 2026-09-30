@@ -98,7 +98,9 @@ The `demo-video` job in `.github/workflows/tests.yml`:
 - Runs once per pull request run, on `ubuntu-24.04` with Python 3.14. It doesn't run on pushes to
   `main` or on manual runs, and it's skipped like `pytest` when only Markdown changed (see
   [cli.md](cli.md) → *Continuous integration*).
-- Installs ffmpeg, the `demo` extra and Chromium, then pins the repositories.
+- Installs the `demo` extra, a static ffmpeg from PyPI (`imageio-ffmpeg`) and Chromium, without
+  apt. The Ubuntu mirror once stalled for 15+ minutes. The job times out after 20 minutes.
+- Pins the repositories.
 - **Checks the baseline:** extracts frames from the committed `docs/demo.mp4` and compares them with
   `tests/demo_frames/`, so the PNGs can't drift from the video.
 - **Records and compares:** records with `demo_30s.py`, extracts the frames, then compares the new frames with
