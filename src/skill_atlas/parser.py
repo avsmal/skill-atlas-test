@@ -1,7 +1,6 @@
 """Parse SKILL.md YAML frontmatter."""
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import yaml
@@ -37,7 +36,3 @@ def parse_skill(path: Path) -> tuple[str, str]:
     name = str(data.get("name") or path.parent.name).strip()
     description = " ".join(str(data.get("description") or "").split())
     return name, description
-
-
-def warn(msg: str) -> None:
-    print(f"warning: {msg}", file=sys.stderr)

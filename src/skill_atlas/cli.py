@@ -9,11 +9,10 @@ from pathlib import Path
 from . import __version__
 from .discovery import find_skill_files
 from .models import Skill
-from .parser import SkillParseError, parse_skill, warn
+from .output import Painter, error, render_header, render_skills, render_summary, use_color, warn
+from .parser import SkillParseError, parse_skill
 from .repo import RepoError, clone, normalize_repo_url
 from .store import Store, default_db_path
-
-DESC_WIDTH = 70
 
 
 def scan_repo(url: str, ref: str | None = None) -> tuple[str, str, list[Skill]]:
@@ -31,20 +30,6 @@ def scan_repo(url: str, ref: str | None = None) -> tuple[str, str, list[Skill]]:
     return repo, commit, skills
 
 
-def _truncate(text: str, width: int) -> str:
-    return text if len(text) <= width else text[: width - 1] + "…"
-
-
-def print_table(skills: list[Skill]) -> None:
-    rows = [(s.name, _truncate(s.description, DESC_WIDTH), s.path) for s in skills]
-    headers = ("NAME", "DESCRIPTION", "PATH")
-    widths = [max(len(h), *(len(r[i]) for r in rows)) for i, h in enumerate(headers)]
-    fmt = "  ".join(f"{{:<{w}}}" for w in widths)
-    print(fmt.format(*headers).rstrip())
-    for r in rows:
-        print(fmt.format(*r).rstrip())
-
-
 def print_json(skills: list[Skill]) -> None:
     json.dump([s.to_dict() for s in skills], sys.stdout, indent=2, ensure_ascii=False)
     print()
@@ -54,7 +39,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
     try:
         repo, commit, skills = scan_repo(args.repo, args.ref)
     except RepoError as e:
-        print(f"error: {e}", file=sys.stderr)
+        error(str(e))
         return 1
     if not args.no_store:
         with Store(args.db) as store:
@@ -62,12 +47,13 @@ def cmd_scan(args: argparse.Namespace) -> int:
     if args.json:
         print_json(skills)
         return 0
-    print(f"{repo} @ {commit[:12]}")
+    paint = Painter(use_color(args.color, sys.stdout))
+    print(render_header(repo, commit, paint))
+    print()
     if skills:
-        print_table(skills)
-        print(f"\n{len(skills)} skill(s) found")
-    else:
-        print("No skills found")
+        print(render_skills(skills, paint))
+        print()
+    print(render_summary(len(skills), paint))
     return 0
 
 
@@ -77,10 +63,14 @@ def cmd_list(args: argparse.Namespace) -> int:
         skills = store.list(repo)
     if args.json:
         print_json(skills)
-    elif skills:
-        print_table(skills)
     else:
-        print("No skills stored")
+        paint = Painter(use_color(args.color, sys.stdout))
+        if skills:
+            print(render_skills(skills, paint, show_source=True))
+            print()
+            print(paint(f"{len(skills)} skill(s) stored", "bold", "green"))
+        else:
+            print(paint("No skills stored", "yellow"))
     return 0
 
 
@@ -91,6 +81,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--json", action="store_true", help="output JSON")
+    common.add_argument(
+        "--color", choices=("auto", "always", "never"), default="auto",
+        help="colorize output (default: auto — only on a terminal, disabled by NO_COLOR)",
+    )
     common.add_argument(
         "--db", type=Path, default=None,
         help="SQLite database path (default: $SKILL_ATLAS_DB or ~/.skill-atlas/atlas.db)",

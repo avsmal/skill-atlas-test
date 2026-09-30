@@ -7,7 +7,7 @@ them (repo, name, description, commit) to a local SQLite database.
 pip install -e .
 skill-atlas scan https://github.com/JetBrains/kotlin
 skill-atlas scan anthropics/skills --json
-skill-atlas list
+skill-atlas list --color never   # auto | always | never
 ```
 
 See [spec/cli.md](spec/cli.md) for the architecture. Run the tests with `pip install -e '.[dev]' && pytest`.
