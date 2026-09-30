@@ -100,6 +100,14 @@ def render_header(repo: str, commit: str, paint: Painter) -> str:
     return f"{paint(repo, 'bold', 'blue')} {paint('@', 'dim')} {paint(commit[:12], 'magenta')}"
 
 
+def render_list(skills: list[Skill], paint: Painter, *, width: int | None = None) -> str:
+    """What ``skill-atlas list`` prints: entries with their repo and commit, then a summary."""
+    if not skills:
+        return paint("No skills stored", "yellow")
+    entries = render_skills(skills, paint, show_source=True, width=width)
+    return f"{entries}\n\n{paint(f'{len(skills)} skill(s) stored', 'bold', 'green')}"
+
+
 def render_summary(count: int, paint: Painter) -> str:
     if count == 0:
         return paint("No skills found", "yellow")

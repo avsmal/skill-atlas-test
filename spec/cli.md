@@ -203,7 +203,7 @@ cli.py ──► repo.py ──► discovery.py ──► parser.py ──► de
 | `dedupe.py` | `dedupe(skills)`: applies rule c (merges `.agents`/`.claude` copies within a prefix, records the merged paths in `duplicates`, and warns when contents differ) |
 | `parser.py` | `parse_frontmatter()` and `parse_skill()` → `(name, description)`. Raises `SkillParseError` on bad input |
 | `models.py` | The `Skill` dataclass |
-| `store.py` | The `Store` class: creates the schema, `replace_repo()`, `list()` |
+| `store.py` | The `Store` class: creates and migrates the schema, `replace_repo()`, `list()`, `repos()` |
 
 ### Fetching strategy
 
@@ -225,7 +225,7 @@ immediately instead of stopping to ask for a password.
 
 ## Data model
 
-SQLite, one table:
+SQLite, two tables:
 
 ```sql
 CREATE TABLE skills (
@@ -238,13 +238,22 @@ CREATE TABLE skills (
     scanned_at  TEXT NOT NULL,   -- ISO-8601 UTC
     PRIMARY KEY (repo, path)
 );
+
+CREATE TABLE repos (             -- one row per scanned repository, even with 0 skills
+    repo        TEXT PRIMARY KEY,
+    commit_sha  TEXT NOT NULL,
+    scanned_at  TEXT NOT NULL
+);
 ```
+
+`repos` is what the web catalogue lists (see [web.md](web.md)). A DB created before it existed gets it
+filled from `skills` when it is opened (repositories whose scan found 0 skills can't be recovered).
 
 A DB created before the `duplicates` column existed gets it added (`ALTER TABLE`) when it is opened;
 old rows read back with no duplicates until the repository is rescanned.
 
 The key is `(repo, path)` rather than `(repo, name)`, because two skills in one repository can share a name.
-A scan replaces **all** rows for its repository in a single transaction. Rescanning
+A scan replaces **all** rows for its repository and upserts its `repos` row in a single transaction. Rescanning
 never creates duplicates, and skills that were deleted upstream disappear from the DB.
 
 ## Errors and exit codes
@@ -261,7 +270,7 @@ never creates duplicates, and skills that were deleted upstream disappear from t
 `pytest` covers:
 - the parser, discovery, and URL normalization (unit tests)
 - output: color decisions, number alignment, description wrapping
-- the store: replace semantics, filtering, `duplicates` round trip, and adding the column to an old DB
+- the store: replace semantics, filtering, the `repos` table (0-skill repos, ordering, backfill of an old DB), `duplicates` round trip, and adding the column to an old DB
 - end-to-end `scan` and `list` against a local git fixture repo, cloned through a `file://` URL (no network)
 
 Edge-case tests (`tests/test_edge_cases.py`) build a fixture repo for each scenario and run the

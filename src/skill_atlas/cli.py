@@ -11,7 +11,7 @@ from . import __version__
 from .dedupe import dedupe
 from .discovery import find_skill_files
 from .models import Skill
-from .output import Painter, error, render_header, render_skills, render_summary, use_color, warn
+from .output import Painter, error, render_header, render_list, render_skills, render_summary, use_color, warn
 from .parser import SkillParseError, parse_skill
 from .repo import RepoError, clone, normalize_repo_url
 from .store import Store, default_db_path
@@ -51,7 +51,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
         return 1
     if not args.no_store:
         with Store(args.db) as store:
-            store.replace_repo(repo, skills)
+            store.replace_repo(repo, skills, commit)
     if args.json:
         print_json(skills)
         return 0
@@ -72,13 +72,7 @@ def cmd_list(args: argparse.Namespace) -> int:
     if args.json:
         print_json(skills)
     else:
-        paint = Painter(use_color(args.color, sys.stdout))
-        if skills:
-            print(render_skills(skills, paint, show_source=True))
-            print()
-            print(paint(f"{len(skills)} skill(s) stored", "bold", "green"))
-        else:
-            print(paint("No skills stored", "yellow"))
+        print(render_list(skills, Painter(use_color(args.color, sys.stdout))))
     return 0
 
 

@@ -15,3 +15,13 @@ class Skill:
 
     def to_dict(self) -> dict:
         return {**asdict(self), "duplicates": list(self.duplicates)}
+
+
+@dataclass(frozen=True)
+class RepoEntry:
+    """A scanned repository, as listed in the web catalogue."""
+
+    repo: str
+    commit: str
+    scanned_at: str  # ISO-8601 UTC
+    skills: int

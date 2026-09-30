@@ -2,10 +2,13 @@
 
 ## Purpose
 
-A small web page for `skill-atlas scan`. It has **one input field**, for the repository URL,
+A small web app for `skill-atlas`. It has **one input field**, for the repository URL,
 and shows **the same output as the CLI**: the header, the numbered skill list, the summary line,
 and any `warning:` / `error:` lines. Skill discovery, parsing and de-duplication are the
 same code as the CLI (see [cli.md](cli.md)), so the results are always identical.
+
+It also has a **catalogue** of every repository already in the database, so earlier scans can be
+browsed without cloning again.
 
 ## Usage
 
@@ -32,18 +35,68 @@ The server uses only the Python standard library (`http.server`, threaded); no n
 
 | Request | Response |
 |---|---|
-| `GET /` | The page with an empty input field and no output. `200` |
+| `GET /` | Home: the input field and the catalogue. `200` |
 | `GET /?repo=` (empty or whitespace) | Same as `GET /`. `200` |
 | `GET /?repo=<repo>` | Scans `<repo>` and returns the page with the input filled in and the output below it. `200` |
 | `GET /?repo=<repo>` where the URL is not allowed | Page with `error: only https:// repository URLs are accepted`. `400`, nothing is cloned |
 | `GET /?repo=<repo>` where the clone fails | Page with `error: <git stderr>`. `502`, DB unchanged |
-| Any other path | `404` |
+| `GET /stored?repo=<repo>` | The stored skills of `<repo>`, read from the DB (no clone). `200` |
+| `GET /stored?repo=<repo>` for a repo not in the DB, or with no `repo` | Page saying it isn't in the catalogue, with a *Scan it* link. `404` |
+| Any other path | `404` page with the scan form and a link home |
 
 The form uses `GET`, so a result page has a shareable URL (`/?repo=JetBrains/kotlin`).
 
 `<repo>` accepts the same forms as the CLI and is normalized the same way
 (`owner/name` → `https://github.com/owner/name`). Results are saved to the DB just like
 `skill-atlas scan`, unless the server runs with `--no-store`.
+
+## Pages
+
+Every page shares one layout: a top bar with the **skill-atlas** wordmark (links home) and a
+*Catalogue* link with the number of stored repositories (`/#catalogue`), then the page content.
+The `<title>` is `skill-atlas` on the home page and `<owner>/<name> · skill-atlas` on repository pages.
+
+### Home (`/`)
+
+1. A short headline and one sentence on what counts as a skill (`.agents/skills` and `.claude/skills`).
+2. The scan form: the one input field and a **Scan** button.
+3. The **catalogue** (`id="catalogue"`): every repository in the DB, most recently scanned first.
+   Each entry is a link to `/stored?repo=<repo>` and shows:
+   - the repository as `owner/name` for GitHub URLs (the full URL otherwise)
+   - the number of skills (`0 skills`, `1 skill`, `N skills`)
+   - the short commit (12 characters)
+   - when it was scanned, in UTC (`YYYY-MM-DD HH:MM UTC`, with the ISO time in `<time datetime>`)
+
+   Above the list: the totals (`N repositories · M skills`). There is no filter field: the page keeps
+   exactly **one** input, the repository URL.
+   With an empty DB, the catalogue says *No repositories yet* and invites a first scan.
+   When the server runs with `--no-store`, a note says new scans aren't added.
+
+   Repositories whose scan found **0 skills** are listed too (see the `repos` table in [cli.md](cli.md)).
+
+### Scan result (`/?repo=<repo>`)
+
+The form, with the input filled in, then the output panel (see *Output*). The panel's title bar
+shows the equivalent command, `$ skill-atlas scan <repo>`, and a **Copy** button that copies the
+output text.
+
+### Stored repository (`/stored?repo=<repo>`)
+
+The scan form (empty), then the repository name, a summary line (skill count, commit, scan time,
+and a *View on GitHub* link for GitHub repositories), a **Rescan** link to
+`/?repo=<repo>`, and an output panel whose text is exactly what
+`skill-atlas list --repo <repo> --color never` prints. The title bar shows that command.
+
+## Design
+
+- Light and dark themes follow the system (`prefers-color-scheme`). Colors are CSS custom properties.
+- The output panel always uses the dark terminal palette, in both themes, so the CLI colors read the same.
+- System UI font for text; monospace for the output, commits, and paths.
+- Layout works from 360 px wide up; the output panel scrolls horizontally instead of wrapping.
+- Keyboard: the input is focused on the home page; `/` focuses it from anywhere on the page.
+- Every page has exactly one `<input>`: the repository URL.
+- JavaScript is only an enhancement (Copy button, `/` shortcut, *Scanning…* state); every page works without it.
+- No external requests: fonts, CSS, JS and the icon are inline.
 
 ## Output
 
@@ -72,7 +125,7 @@ https://github.com/o/r @ c823f9e564fd
   Only repositories that normalize to `https://github.com/<owner>/<name>` get links; for any other
   URL (e.g. `file://` with `--allow-local`) the path stays plain text. The link text is the path
   itself, so the `<pre>` text is unchanged. Every path is linked, including the paths of duplicates.
-- All text taken from the repository (names, descriptions, paths) and from the input is HTML-escaped.
+- All text taken from the repository (names, descriptions, paths), from the DB, and from the input is HTML-escaped.
 
 While a scan is running, the button shows *Scanning…* and is disabled.
 
@@ -94,8 +147,10 @@ web.py ──► cli.scan_repo() ──► (same pipeline as the CLI)
 
 | Module | Responsibility |
 |---|---|
-| `web.py` | `HtmlPainter` (a `Painter` that escapes HTML, emits `<span>`s, and renders `link()` as `<a>`), `render_page()`, the request handler, and `make_server()` |
+| `web.py` | `HtmlPainter` (a `Painter` that escapes HTML, emits `<span>`s, and renders `link()` as `<a>`), the page renderers (`render_home()`, `render_scan()`, `render_stored()`, `render_not_found()`), the request handler, and `make_server()` |
+| `store.py` | `Store.repos()`: one `RepoEntry(repo, commit, scanned_at, skills)` per repository, most recent first |
 | `output.py` | `Painter.link(text, url, *styles)`: plain styled text in the terminal; `render_skills()` passes each path's GitHub URL through it |
+| `output.py` | `render_list()`: the `list` output, shared by `skill-atlas list` and the stored-repository page |
 | `repo.py` | `github_blob_url(repo, commit, path)`: the file's GitHub URL, or `None` for non-GitHub repos |
 | `cli.py` | The `serve` subcommand. `scan_repo()` takes a `warn` callback so the web page can collect warnings instead of printing them |
 
@@ -114,3 +169,9 @@ row of the *HTTP interface* table, plus:
 - color spans are present (`<span class="bold cyan">`)
 - without `allow_local`, `file://`, non-GitHub `git@` and `-`-prefixed input get `400` and nothing is stored
 - results are stored in the DB, and not stored with `store=False`
+- catalogue: lists every scanned repository with its skill count, short commit and scan time,
+  most recent first; includes a 0-skill repository; links to `/stored`; shows the empty state and the
+  `--no-store` note; escapes stored text; the top bar shows the repository count
+- `/stored?repo=`: accepts the same input forms as scan; its `<pre>` text equals
+  `skill-atlas list --repo <repo> --color never`; `404` for unknown or missing `repo`; links to rescan
+- the page `<title>` for home and repository pages, and exactly one `<input>` on every page
