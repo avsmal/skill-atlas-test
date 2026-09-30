@@ -15,7 +15,7 @@
   `extensions-api-migration` → install card.
 - Recorded with Playwright (user approved the download) rather than macOS screen capture, so only
   the page is filmed. Playwright doesn't render the mouse, so a fake cursor is injected. Scan waits
-  are cut with ffmpeg, leaving 0.8 s of *Scanning…*. The recording scripts were not committed.
+  are cut with ffmpeg, leaving 0.8 s of *Scanning…*.
 - `docs/demo.gif` (800 px, 10 fps, 1.8 MB) exists only to show the video in the PR description:
   GitHub strips `<video>` tags, and only its own upload attachments (which `gh` can't create)
   play inline, but animated images from the repo render.
