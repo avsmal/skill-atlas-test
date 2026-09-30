@@ -1,0 +1,2 @@
+# keep fixture bytes exact (CRLF, BOM) regardless of core.autocrlf
+* -text

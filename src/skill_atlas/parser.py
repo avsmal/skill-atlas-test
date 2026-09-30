@@ -24,10 +24,19 @@ def parse_frontmatter(text: str) -> dict:
     try:
         data = yaml.safe_load(block) or {}
     except yaml.YAMLError as e:
-        raise SkillParseError(f"invalid YAML: {e}") from e
+        raise SkillParseError(f"invalid YAML: {_describe_yaml_error(e)}") from e
     if not isinstance(data, dict):
         raise SkillParseError("frontmatter is not a mapping")
     return data
+
+
+def _describe_yaml_error(e: yaml.YAMLError) -> str:
+    """One-line summary of a PyYAML error; line numbers count the opening ``---``."""
+    problem = getattr(e, "problem", None)
+    mark = getattr(e, "problem_mark", None)
+    if not problem:
+        return str(e).splitlines()[0]
+    return f"{problem} (line {mark.line + 2})" if mark else problem
 
 
 def parse_skill(path: Path) -> tuple[str, str]:

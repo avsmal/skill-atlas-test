@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from . import __version__
+from .dedupe import dedupe
 from .discovery import find_skill_files
 from .models import Skill
 from .output import Painter, error, render_header, render_skills, render_summary, use_color, warn
@@ -19,7 +20,10 @@ def scan_repo(url: str, ref: str | None = None) -> tuple[str, str, list[Skill]]:
     repo = normalize_repo_url(url)
     skills: list[Skill] = []
     with clone(repo, ref) as (root, commit):
-        for path in find_skill_files(root):
+        found = find_skill_files(root)
+        for path in found.symlinks:
+            warn(f"skipping {path.relative_to(root).as_posix()}: symlink")
+        for path in found.files:
             rel = path.relative_to(root).as_posix()
             try:
                 name, description = parse_skill(path)
@@ -27,6 +31,7 @@ def scan_repo(url: str, ref: str | None = None) -> tuple[str, str, list[Skill]]:
                 warn(f"skipping {rel}: {e}")
                 continue
             skills.append(Skill(repo, name, description, commit, rel))
+        skills = dedupe(skills, read=lambda rel: (root / rel).read_bytes(), warn=warn)
     return repo, commit, skills
 
 

@@ -11,11 +11,11 @@ def test_scan_and_list(fixture_repo, tmp_path, capsys):
     out = capsys.readouterr()
     skills = json.loads(out.out)
     assert [(s["name"], s["description"], s["path"]) for s in skills] == [
+        ("review", "Review code carefully", ".agents/skills/review/SKILL.md"),
         ("pdf", "Work with PDF files", ".claude/skills/pdf/SKILL.md"),
-        ("review", "Review code carefully", "plugins/x/skills/review/SKILL.md"),
     ]
     assert all(len(s["commit"]) == 40 and s["repo"] == url for s in skills)
-    assert "skipping broken/SKILL.md" in out.err
+    assert "skipping .claude/skills/broken/SKILL.md" in out.err
 
     # rescan doesn't duplicate
     assert main(["scan", url, "--db", str(db)]) == 0
@@ -40,8 +40,8 @@ def test_scan_text_output_numbered_multiline(fixture_repo, tmp_path, capsys):
     assert main(["scan", url, "--no-store", "--color", "never", "--db", str(tmp_path / "db")]) == 0
     out = capsys.readouterr().out
     assert "\033[" not in out
-    assert "1. pdf\n   description: Work with PDF files\n   path:        .claude/skills/pdf/SKILL.md" in out
-    assert "2. review\n" in out
+    assert "2. pdf\n   description: Work with PDF files\n   path:        .claude/skills/pdf/SKILL.md" in out
+    assert "1. review\n" in out
     assert "2 skill(s) found" in out
 
 
