@@ -6,7 +6,8 @@ Usage from a scenes file (see demo_30s.py):
         d.goto("/")
         d.scan("JetBrains/ideavim")
         ...
-    # on exit: <out>/demo.mp4 (scan waits trimmed), demo.gif (PR preview), sheet.png (frame check)
+    # on exit: <out>/demo.mp4 (scan waits trimmed), demo.gif (PR preview), sheet.png (frame check),
+    # demo-moments.json (times of the d.mark() key moments in demo.mp4, see spec/demo-video.md)
 
 Needs `pip install playwright && playwright install chromium`, plus ffmpeg on PATH.
 """
@@ -16,11 +17,14 @@ import json
 import shutil
 import socket
 import subprocess
+import threading
 import time
-import urllib.request
+from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from playwright.sync_api import Locator, sync_playwright
+if TYPE_CHECKING:
+    from playwright.sync_api import Locator
 
 # Playwright doesn't film the real mouse: draw one that follows mouse events.
 CURSOR_JS = """
@@ -47,6 +51,26 @@ CURSOR_JS = """
 """
 
 
+def cuts_from_markers(markers: list[list[float]], keep_head: float = 0.8,
+                      keep_tail: float = 0.2) -> list[tuple[float, float]]:
+    """Parts of each scan wait ``[start, end]`` to cut, keeping its head and tail."""
+    return [(a + keep_head, b - keep_tail) for a, b in markers if b - a > keep_head + keep_tail]
+
+
+def map_moments(moments: dict[str, float], cuts: list[tuple[float, float]]) -> dict[str, float]:
+    """Moment times in the trimmed video. A moment inside a cut moves to where the cut was."""
+    return {name: round(t - sum(min(b, t) - a for a, b in cuts if a < t), 3) for name, t in moments.items()}
+
+
+def frozen_datetime(now: datetime) -> type[datetime]:
+    """A ``datetime`` class whose ``now()`` always returns ``now``."""
+    class Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now.astimezone(tz) if tz else now.replace(tzinfo=None)
+    return Frozen
+
+
 def port_in_use(port: int) -> bool:
     with socket.socket() as s:
         return s.connect_ex(("127.0.0.1", port)) == 0
@@ -54,12 +78,16 @@ def port_in_use(port: int) -> bool:
 
 class Demo:
     def __init__(self, out: Path | str, *, port: int = 8766, size=(1280, 800),
-                 color_scheme: str = "dark", type_delay: int = 55, keep_wait: float = 0.8):
+                 color_scheme: str = "dark", type_delay: int = 55, keep_wait: float = 0.8,
+                 clock: datetime | None = None):
+        """``clock`` freezes the server's time (scan times on the catalogue and stored pages)."""
         self.out = Path(out)
+        self.clock = clock
         self.port, self.size, self.color_scheme = port, size, color_scheme
         self.type_delay, self.keep_wait = type_delay, keep_wait
         self.base = f"http://127.0.0.1:{port}"
         self.markers: list[list[float]] = []  # [start, end] of each scan wait, in video seconds
+        self.moments: dict[str, float] = {}  # key moment name -> raw video seconds
 
     # --- lifecycle -------------------------------------------------------------------------
     def __enter__(self) -> "Demo":
@@ -68,14 +96,17 @@ class Demo:
         self.out.mkdir(parents=True, exist_ok=True)
         db = self.out / "demo.db"
         db.unlink(missing_ok=True)  # fresh DB → the catalogue starts empty
-        self.server = subprocess.Popen(
-            ["skill-atlas", "serve", "--db", str(db), "--port", str(self.port)],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        for _ in range(50):
-            try:
-                urllib.request.urlopen(self.base + "/", timeout=1); break
-            except OSError:
-                time.sleep(0.2)
+        from playwright.sync_api import sync_playwright
+        from skill_atlas import store
+        from skill_atlas.web import Handler, make_server
+
+        # In-process server, so the clock can be frozen; no request log in the terminal.
+        self._store_datetime = store.datetime
+        if self.clock:
+            store.datetime = frozen_datetime(self.clock)
+        Handler.log_message = lambda *a: None
+        self.server = make_server("127.0.0.1", self.port, db)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.pw = sync_playwright().start()
         self.browser = self.pw.chromium.launch()
         w, h = self.size
@@ -92,15 +123,24 @@ class Demo:
     def __exit__(self, exc_type, *_):
         video = self.page.video.path()
         self.ctx.close(); self.browser.close(); self.pw.stop()
-        self.server.terminate()
+        self.server.shutdown(); self.server.server_close()
+        from skill_atlas import store
+        store.datetime = self._store_datetime
         if exc_type is None:
             shutil.move(video, self.out / "raw.webm")
+            shutil.rmtree(self.out / "video", ignore_errors=True)
             (self.out / "markers.json").write_text(json.dumps(self.markers))
+            (self.out / "moments.json").write_text(json.dumps(self.moments, indent=2) + "\n")
             self.finish()
 
     # --- actions ---------------------------------------------------------------------------
     def now(self) -> float:
         return time.monotonic() - self.t0
+
+    def mark(self, name: str):
+        """A key moment: CI screenshots it (spec/demo-video.md). Call it once the page has
+        loaded and the pointer has stopped, and hold at least 1.5 s after it."""
+        self.moments[name] = round(self.now(), 3)
 
     def hold(self, seconds: float):
         self.page.wait_for_timeout(int(seconds * 1000))
@@ -154,18 +194,22 @@ class Demo:
         self.hold(seconds)
         self.page.go_back(wait_until="load")
 
-    def card(self, html_lines: list[str], seconds: float = 3.5):
-        """A full-screen terminal-style title card (outro, chapter title)."""
+    def card(self, html_lines: list[str], seconds: float = 3.5, mark: str | None = None):
+        """A full-screen terminal-style title card (outro, chapter title); ``mark`` names it
+        as a key moment."""
         body = "<br>".join(html_lines)
         self.page.set_content(
             '<body style="margin:0;height:100vh;display:grid;place-items:center;background:#0d1117;'
             'font:500 34px/1.7 ui-monospace,Menlo,monospace;color:#e6edf3"><div>' + body + "</div></body>")
+        if mark:
+            self.mark(mark)
         self.hold(seconds)
 
     # --- post-processing -------------------------------------------------------------------
     def finish(self):
         d, keep_head, keep_tail = self.out, self.keep_wait, 0.2
-        cuts = [(a + keep_head, b - keep_tail) for a, b in self.markers if b - a > keep_head + keep_tail]
+        cuts = cuts_from_markers(self.markers, keep_head, keep_tail)
+        (d / "demo-moments.json").write_text(json.dumps(map_moments(self.moments, cuts), indent=2) + "\n")
         expr = "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b in cuts) or "0"
         ff = ["ffmpeg", "-y", "-loglevel", "error"]
         subprocess.run(ff + ["-i", str(d / "raw.webm"),
@@ -181,9 +225,12 @@ class Demo:
         # One frame every 2.5 s, tiled: read this image to check every scene rendered.
         subprocess.run(ff + ["-i", str(d / "demo.mp4"), "-vf", "fps=1/2.5,scale=640:-1,tile=3x6",
                              "-frames:v", "1", str(d / "sheet.png")], check=True)
-        dur = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                              "-of", "csv=p=0", str(d / "demo.mp4")],
-                             capture_output=True, text=True).stdout.strip()
+        dur = "?"
+        if shutil.which("ffprobe"):  # CI's static ffmpeg comes without ffprobe
+            dur = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                                  "-of", "csv=p=0", str(d / "demo.mp4")],
+                                 capture_output=True, text=True).stdout.strip()
+            dur = f"{float(dur):.1f}"
         size = lambda f: f"{(d / f).stat().st_size / 1e6:.1f} MB"
-        print(f"demo.mp4 {float(dur):.1f} s, {size('demo.mp4')}; demo.gif {size('demo.gif')}; "
+        print(f"demo.mp4 {dur} s, {size('demo.mp4')}; demo.gif {size('demo.gif')}; "
               f"sheet.png; trimmed waits: {[(round(a, 1), round(b, 1)) for a, b in cuts]}")

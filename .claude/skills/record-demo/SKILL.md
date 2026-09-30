@@ -14,6 +14,13 @@ Files:
   GIF, frame sheet). Read its docstrings before writing scenes.
 - `scripts/demo_30s.py`: the scenes behind `docs/demo.mp4` (~30 s). Copy it for a new cut.
 
+**`docs/demo.mp4` is also a CI regression test** ([spec/demo-video.md](../../../spec/demo-video.md)).
+On every PR, CI re-records it with `demo_30s.py` on Linux, with the demo repos pinned, and compares
+screenshots at its `d.mark()` key moments with `tests/demo_frames/`. Don't commit a local recording
+as `docs/demo.mp4`: macOS renders differently. After changing the scenes or the UI, push, then
+accept CI's recording with `scripts/demo/update-baseline.sh <run id>`. Keep every `d.mark()` at a
+settled page with at least 1.5 s of hold after it.
+
 ## 1. Plan the cut
 
 - Start from `docs/demo-script.md` (scenes, repos, voice-over). Ask the user how long the video
@@ -25,13 +32,16 @@ Files:
 
 ## 2. Set up (ask first)
 
-Playwright is not a project dependency. Installing it downloads the package (~40 MB) and Chromium
-(~150 MB), so **ask the user before**:
+Playwright is only in the optional `demo` extra (pinned: another Chromium renders differently).
+Installing it downloads the package (~40 MB) and Chromium (~150 MB), so **ask the user before**:
 
 ```bash
 . .venv/bin/activate
-pip install playwright && playwright install chromium
+pip install -e '.[demo]' && playwright install chromium
 ```
+
+To record the same content as CI, pin the repos first:
+`scripts/demo/pin-repos.sh <scratchpad>/pins && export GIT_CONFIG_GLOBAL=<scratchpad>/pins/gitconfig`.
 
 `ffmpeg`/`ffprobe` must be on `PATH` (`brew install ffmpeg`).
 
@@ -42,7 +52,8 @@ python .claude/skills/record-demo/scripts/demo_30s.py <scratchpad>/take1 --port 
 ```
 
 Output in `<out>`: `demo.mp4` (scan waits trimmed to 0.8 s of *Scanning…*), `demo.gif` (800 px,
-10 fps), `sheet.png` (a frame every 2.5 s), plus `raw.webm`, `markers.json` and `demo.db`.
+10 fps), `sheet.png` (a frame every 2.5 s), `demo-moments.json` (key moments in `demo.mp4`), plus
+`raw.webm`, `markers.json`, `moments.json` and `demo.db`.
 Write recordings to the scratchpad, not the repo, until the user wants one committed.
 
 **Check `sheet.png` before showing the video** (read the image): every scene present, no error page,
@@ -63,7 +74,8 @@ no half-loaded frame. Send the MP4 to the user and wait for feedback before comm
 ## Pitfalls (all hit while building this)
 
 - **Busy port:** something else may own the port (8000 was taken once). `Demo` refuses a busy
-  port; pick another with `--port`. Never kill a process you didn't start.
+  port; pick another with `--port`. Never kill a process you didn't start. The server runs
+  in-process (so `clock=` can freeze scan times).
 - **Navigation race:** after a click on a link, use `nav_click()`, not `click()` +
   `wait_for_load_state()`, which returns immediately on the old page.
 - **No real cursor** in Playwright videos: `demo_kit` injects a drawn one (init script, persists

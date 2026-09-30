@@ -75,3 +75,72 @@ jobs:
 
       - name: Test
         run: python -m pytest -v
+
+  # Re-record docs/demo.mp4 and compare screenshots at its key moments with tests/demo_frames/.
+  # Once per pull request run (not per OS, not on pushes to main). See spec/demo-video.md.
+  demo-video:
+    needs: changes
+    if: needs.changes.outputs.code == 'true' && github.event_name == 'pull_request'
+    # Pinned image: fonts and system libraries change how the pages render.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      # No apt: its mirror stalled for 15+ minutes once. ffmpeg comes as a static binary from
+      # PyPI, and the runner image already has Chromium's system libraries.
+      - name: Install
+        timeout-minutes: 8
+        run: |
+          python -m pip install -e '.[demo]' imageio-ffmpeg==0.6.0
+          mkdir -p "$HOME/.local/bin"
+          ln -sf "$(python -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')" "$HOME/.local/bin/ffmpeg"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          python -m playwright install chromium
+
+      - name: Pin the demo repositories to the video's commits
+        id: pin
+        timeout-minutes: 5
+        run: |
+          scripts/demo/pin-repos.sh "$RUNNER_TEMP/pins"
+          echo "GIT_CONFIG_GLOBAL=$RUNNER_TEMP/pins/gitconfig" >> "$GITHUB_ENV"
+          echo "OUT=$RUNNER_TEMP/demo" >> "$GITHUB_ENV"
+
+      - name: Check the baseline screenshots come from docs/demo.mp4
+        run: |
+          python scripts/demo/video.py extract docs/demo.mp4 docs/demo-moments.json "$OUT/baseline-frames"
+          python scripts/demo/video.py compare tests/demo_frames "$OUT/baseline-frames" "$OUT/baseline-diff" \
+            --title "Baseline screenshots vs docs/demo.mp4"
+
+      # Record even when the baseline check failed, so the artifact can become the new baseline.
+      - name: Record the demo video
+        id: record
+        if: ${{ !cancelled() && steps.pin.outcome == 'success' }}
+        run: |
+          python .claude/skills/record-demo/scripts/demo_30s.py "$OUT"
+          python scripts/demo/video.py extract "$OUT/demo.mp4" "$OUT/demo-moments.json" "$OUT/frames"
+
+      - name: Compare screenshots with tests/demo_frames
+        if: ${{ !cancelled() && steps.record.outcome == 'success' }}
+        run: python scripts/demo/video.py compare tests/demo_frames "$OUT/frames" "$OUT/diff"
+
+      # To accept the new recording: scripts/demo/update-baseline.sh <run id>
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: demo-video
+          path: |
+            ${{ runner.temp }}/demo/demo.mp4
+            ${{ runner.temp }}/demo/demo.gif
+            ${{ runner.temp }}/demo/sheet.png
+            ${{ runner.temp }}/demo/demo-moments.json
+            ${{ runner.temp }}/demo/frames/
+            ${{ runner.temp }}/demo/diff/
+            ${{ runner.temp }}/demo/baseline-diff/
+          if-no-files-found: warn
