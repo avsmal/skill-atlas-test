@@ -6,7 +6,7 @@
 
 ## What was asked
 - Record the demo from [PR #13's script](2026-09-30_1431_docs-web-demo-script.md); then make it a
-  short ~30 s video instead of the 3-minute version; then commit the video to the repo.
+  short ~30 s video instead of the 3-minute version; then commit the video to the repo and show it in the PR description.
 - A request to add JetBrains/MPS and JetBrains/intellij-community examples was withdrawn.
 
 ## What was decided / built
@@ -16,6 +16,9 @@
 - Recorded with Playwright (user approved the download) rather than macOS screen capture, so only
   the page is filmed. Playwright doesn't render the mouse, so a fake cursor is injected. Scan waits
   are cut with ffmpeg, leaving 0.8 s of *Scanning…*. The recording scripts were not committed.
+- `docs/demo.gif` (800 px, 10 fps, 1.8 MB) exists only to show the video in the PR description:
+  GitHub strips `<video>` tags, and only its own upload attachments (which `gh` can't create)
+  play inline, but animated images from the repo render.
 
 ## Context
 - Clone times vary a lot: kotlin took 4 s once and 20–34 s later.
