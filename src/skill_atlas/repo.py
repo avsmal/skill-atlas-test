@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Iterator
 from urllib.parse import quote
 
-_GITHUB_REPO = re.compile(r"^https://github\.com/[\w.-]+/[\w.-]+$")
+_GITHUB_REPO = re.compile(r"^https://github\.com/([\w.-]+/[\w.-]+)$")
 _SHORTHAND = re.compile(r"^[\w.-]+/[\w.-]+$")
 # gitignore-style patterns (non-cone sparse checkout) for rule (a) in spec/cli.md:
 # <prefix>/.agents|.claude/skills/<skill-dir>/SKILL.md, file name in any case.
@@ -44,9 +44,15 @@ def normalize_repo_url(url: str) -> str:
     return url
 
 
+def github_slug(repo: str) -> str | None:
+    """``owner/name`` for a normalized GitHub URL, else None."""
+    m = _GITHUB_REPO.match(repo)
+    return m.group(1) if m else None
+
+
 def github_blob_url(repo: str, commit: str, path: str) -> str | None:
     """Link to ``path`` at ``commit`` on GitHub, or None if ``repo`` isn't a GitHub repository."""
-    if not _GITHUB_REPO.match(repo):
+    if not github_slug(repo):
         return None
     return f"{repo}/blob/{commit}/{quote(path, safe='/')}"
 

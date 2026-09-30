@@ -204,3 +204,142 @@ def test_non_github_paths_are_not_links(serve, fixture_repo):
     _, body = serve()(scan_url(fixture_repo.as_uri()))
     assert "<a href" not in body
     assert '<span class="green">.claude/skills/pdf/SKILL.md</span>' in body
+
+
+# --- Catalogue and stored pages --------------------------------------------------------
+
+def title(body: str) -> str:
+    return html.unescape(re.search(r"<title>(.*?)</title>", body).group(1))
+
+
+def seed(db, repo, skills, commit, scanned_at):
+    from skill_atlas.models import Skill
+
+    with Store(db) as s:
+        s.replace_repo(repo, [Skill(repo, n, f"{n} skill", commit, f".claude/skills/{n}/SKILL.md") for n in skills], commit)
+        s.conn.execute("UPDATE repos SET scanned_at = ? WHERE repo = ?", (scanned_at, repo))
+        s.conn.commit()
+
+
+def test_catalogue_lists_scanned_repos(serve, fixture_repo, tmp_path):
+    get = serve()
+    url = fixture_repo.as_uri()
+    get(scan_url(url))
+    empty = make_repo(tmp_path / "empty", {})
+    get(scan_url(empty.as_uri()))
+
+    status, body = get("/")
+    assert status == 200
+    assert title(body) == "skill-atlas"
+    catalogue = body[body.index('id="catalogue"'):]
+    assert "2 repositories · 2 skills" in catalogue
+    assert f'href="/stored?repo={quote(url, safe="")}"' in catalogue
+    assert '<span class="badge">2 skills</span>' in catalogue
+    assert '<span class="badge badge--zero">0 skills</span>' in catalogue  # 0-skill repos are listed
+    with Store(tmp_path / "web.db") as s:
+        commit = s.repos()[0].commit
+    assert f"<code class=\"repo__commit\">{commit[:12]}</code>" in catalogue
+    assert re.search(r'<time datetime="[^"]+">\d{4}-\d\d-\d\d \d\d:\d\d UTC</time>', catalogue)
+    assert '<span class="count">2</span>' in body  # top bar
+
+
+def test_catalogue_order_names_and_escaping(serve, tmp_path):
+    db = tmp_path / "web.db"
+    seed(db, "https://github.com/acme/old", ["a"], "1" * 40, "2026-01-01T00:00:00+00:00")
+    seed(db, "https://github.com/acme/new", ["a", "b", "c"], "2" * 40, "2026-03-01T00:00:00+00:00")
+    seed(db, "file:///srv/<b>&x", [], "3" * 40, "2026-02-01T00:00:00+00:00")
+    _, body = serve()("/")
+    shown = re.findall(r'class="repo__name">([^<]+)<', body)
+    assert shown == ["new", "file:///srv/&lt;b&gt;&amp;x", "old"]  # most recent first
+    assert '<span class="repo__owner">acme/</span>' in body
+    assert "<b>&x" not in body
+    assert "3 repositories · 4 skills" in body
+    assert "2026-03-01 00:00 UTC" in body
+
+
+def test_catalogue_empty(serve):
+    _, body = serve()("/")
+    assert "No repositories yet" in body
+    assert '<span class="count">0</span>' in body
+    assert "--no-store" not in body
+
+
+def test_catalogue_no_store_note(serve, tmp_path):
+    seed(tmp_path / "web.db", "https://github.com/o/r", ["a"], "1" * 40, "2026-01-01T00:00:00+00:00")
+    _, body = serve(store=False)("/")
+    assert "<code>--no-store</code>: new scans are not added" in body
+    assert "o/</span>" in body  # the existing DB is still shown
+
+
+def test_stored_matches_cli_list(serve, fixture_repo, tmp_path, capsys):
+    get = serve()
+    url = fixture_repo.as_uri()
+    get(scan_url(url))
+    status, body = get("/stored?repo=" + quote(url, safe=""))
+    assert status == 200
+    capsys.readouterr()  # drop the server's access log
+
+    assert main(["list", "--repo", url, "--color", "never", "--db", str(tmp_path / "web.db")]) == 0
+    assert output_text(body) == capsys.readouterr().out.rstrip("\n")
+    assert f"$</span> skill-atlas list --repo {html.escape(url)}" in body
+    assert f'href="{html.escape(scan_url(url))}">Rescan</a>' in body
+    assert "View on GitHub" not in body  # not a GitHub repo
+
+
+def test_stored_github_repo_by_shorthand(serve, tmp_path):
+    seed(tmp_path / "web.db", "https://github.com/o/r", ["pdf"], "a" * 40, "2026-01-01T00:00:00+00:00")
+    status, body = serve()("/stored?repo=o/r")
+    assert status == 200
+    assert title(body) == "o/r · skill-atlas"
+    assert "<h1>o/r</h1>" in body
+    assert '<a class="btn btn--ghost" href="https://github.com/o/r" target="_blank" rel="noopener">View on GitHub</a>' in body
+    assert f'href="https://github.com/o/r/blob/{"a" * 40}/.claude/skills/pdf/SKILL.md"' in body
+    assert output_text(body).endswith("1 skill(s) stored")
+
+
+def test_stored_zero_skill_repo(serve, tmp_path):
+    seed(tmp_path / "web.db", "https://github.com/o/empty", [], "b" * 40, "2026-01-01T00:00:00+00:00")
+    status, body = serve()("/stored?repo=o/empty")
+    assert status == 200
+    assert output_text(body) == "No skills stored"
+
+
+def test_stored_unknown_repo_is_404(serve, tmp_path):
+    seed(tmp_path / "web.db", "https://github.com/o/r", ["a"], "1" * 40, "2026-01-01T00:00:00+00:00")
+    status, body = serve()("/stored?repo=o/missing")
+    assert status == 404
+    assert "o/missing isn&#x27;t in the catalogue yet." in body
+    assert 'href="/?repo=https%3A%2F%2Fgithub.com%2Fo%2Fmissing">Scan it</a>' in body
+
+
+@pytest.mark.parametrize("path", ["/stored", "/stored?repo="])
+def test_stored_without_repo_is_404(serve, path):
+    status, body = serve()(path)
+    assert status == 404
+    assert "No repository given." in body
+
+
+def test_not_found_page(serve):
+    status, body = serve()("/nope")
+    assert status == 404
+    assert "Page not found: /nope" in body
+    assert 'href="/">Go home</a>' in body
+
+
+def test_scan_page_title_and_command(serve, fixture_repo):
+    _, body = serve()(scan_url(fixture_repo.as_uri()))
+    assert title(body) == f"{fixture_repo.as_uri()} · skill-atlas"
+    assert f"$</span> skill-atlas scan {fixture_repo.as_uri()}" in body
+
+
+def test_every_page_has_exactly_one_input(serve, fixture_repo, tmp_path):
+    get = serve()
+    url = fixture_repo.as_uri()
+    pages = ["/", scan_url(url), "/stored?repo=" + quote(url, safe=""), "/stored?repo=x/y", "/nope"]
+    for path in pages:
+        _, body = get(path)
+        assert len(re.findall(r"<input\b", body)) == 1, path
+        assert 'name="repo"' in body
+        # no external assets: scripts, styles and the icon are inline
+        assert not re.search(r"<script[^>]+src=|<link[^>]+stylesheet", body), path
+        assert re.findall(r'<link rel="icon" href="([^"]{5})', body) == ["data:"], path
