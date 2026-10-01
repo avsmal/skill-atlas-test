@@ -11,7 +11,7 @@ skill-atlas scan https://github.com/JetBrains/kotlin
 skill-atlas scan JetBrains/kotlin --json
 skill-atlas scan https://github.com/JetBrains   # every repository of an organization or user
 skill-atlas list --color never   # auto | always | never
-skill-atlas serve                # web UI on http://127.0.0.1:8000/ (scan + catalogue of the DB)
+skill-atlas serve                # web UI on http://127.0.0.1:8000/ (scan, catalogue of the DB, starred skills)
 ```
 
 See [spec/cli.md](spec/cli.md) for the architecture and the exact rules for what counts as a skill

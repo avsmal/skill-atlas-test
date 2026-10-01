@@ -1,9 +1,6 @@
 """Integration tests for the web UI (spec/web.md): a real server, real HTTP, a local git repo."""
 import html
 import re
-import threading
-import urllib.error
-import urllib.request
 from urllib.parse import quote
 
 import pytest
@@ -11,33 +8,6 @@ import pytest
 from conftest import make_repo, skill_md
 from skill_atlas.cli import main
 from skill_atlas.store import Store
-from skill_atlas.web import make_server
-
-
-@pytest.fixture
-def serve(tmp_path):
-    """Start a server; returns ``get(path) -> (status, body)``."""
-    servers = []
-
-    def start(**kwargs):
-        kwargs.setdefault("allow_local", True)
-        server = make_server("127.0.0.1", 0, tmp_path / "web.db", **kwargs)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        servers.append(server)
-        base = f"http://127.0.0.1:{server.server_address[1]}"
-
-        def get(path):
-            try:
-                with urllib.request.urlopen(base + path) as r:
-                    return r.status, r.read().decode()
-            except urllib.error.HTTPError as e:
-                return e.code, e.read().decode()
-        return get
-
-    yield start
-    for s in servers:
-        s.shutdown()
-        s.server_close()
 
 
 def output_text(body: str) -> str:

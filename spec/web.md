@@ -8,7 +8,7 @@ and any `warning:` / `error:` lines. Skill discovery, parsing and de-duplication
 same code as the CLI (see [cli.md](cli.md)), so the results are always identical.
 
 It also has a **catalogue** of every repository already in the database, so earlier scans can be
-browsed without cloning again.
+browsed without cloning again, and lets people **star** the skills they like (see *Stars*).
 
 ## Usage
 
@@ -26,7 +26,7 @@ Open the URL, type a repository (`https://github.com/JetBrains/kotlin`, `JetBrai
 | `--host HOST` | Address to bind. Default `127.0.0.1` |
 | `--port PORT` | Port to bind. Default `8000`; `0` picks a free port |
 | `--db PATH` | SQLite DB path, same default as the CLI (`$SKILL_ATLAS_DB` or `~/.skill-atlas/atlas.db`) |
-| `--no-store` | Don't write scan results to the DB |
+| `--no-store` | Don't write scan results to the DB (stars are still saved; see *Stars*) |
 | `--allow-local` | Also accept non-`https://` URLs, such as `file://`. Off by default; see *Security* |
 
 The server uses only the Python standard library (`http.server`, threaded); no new dependencies.
@@ -45,7 +45,12 @@ The server uses only the Python standard library (`http.server`, threaded); no n
 | `GET /stored?repo=<repo>` for a repo not in the DB, or with no `repo` | Page saying it isn't in the catalogue, with a *Scan it* link. `404` |
 | `GET /similar?repo=<repo>&path=<path>` | Skills similar to the one at `<path>` in `<repo>`'s stored skills. `200` |
 | `GET /similar?repo=<repo>&path=<path>` when that repo/path isn't stored, or `repo`/`path` is missing | Page saying it isn't in the catalogue, with a *Scan it* link. `404` |
-| Any other path | `404` page with the scan form and a link home |
+| `POST /star?repo=<repo>&path=<path>&star=1` | Stars that stored skill for the visitor (`star=0` unstars), then `303` to `next` (see *Stars*) |
+| `POST /star?…` with `Accept: application/json` | Same, but `200` with `{"starred": <bool>, "stars": <count>}` instead of the redirect |
+| `POST /star?…` with an `Origin` header for another host | `403` page, nothing stored |
+| `POST /star?…` where `star` is missing or not `0`/`1` | `400` page, nothing stored |
+| `POST /star?…` when that repo/path isn't stored, or `repo`/`path` is missing | The `404` page used by `/similar`, nothing stored |
+| Any other path (`GET /star` and other `POST`s included) | `404` page with the scan form and a link home |
 
 The form uses `GET`, so a result page has a shareable URL (`/?repo=JetBrains/kotlin`).
 
@@ -63,7 +68,10 @@ The `<title>` is `skill-atlas` on the home page and `<owner>/<name> · skill-atl
 
 1. A short headline and one sentence on what counts as a skill (`.agents/skills` and `.claude/skills`).
 2. The scan form: the one input field and a **Scan** button.
-3. The **catalogue** (`id="catalogue"`): every repository in the DB, most recently scanned first.
+3. **Most starred** (`id="starred"`), only when at least one stored skill has a star: the 10 stored skills
+   with the most stars (ties: repository, then skill name), each linking to its
+   `/similar?repo=&path=` page and showing its name, its repository (`owner/name`) and `★ N`.
+4. The **catalogue** (`id="catalogue"`): every repository in the DB, most recently scanned first.
    Each entry is a link to `/stored?repo=<repo>` and shows:
    - the repository as `owner/name` for GitHub URLs (the full URL otherwise)
    - the number of skills (`0 skills`, `1 skill`, `N skills`)
@@ -82,7 +90,9 @@ The `<title>` is `skill-atlas` on the home page and `<owner>/<name> · skill-atl
 The form, with the input filled in, then the output panel (see *Output*). The panel's title bar
 shows the equivalent command, `$ skill-atlas scan <repo>`, and a **Copy** button that copies the
 output text. When the scan found at least one skill, the panel also has a **filter field** (see
-*Skill filter*).
+*Skill filter*). When the result was saved (the server doesn't run with `--no-store`), each skill
+has a **star button** after its name (see *Stars*), which returns to the stored-repository page
+without JavaScript, since returning to `/?repo=` would clone again.
 
 ### Stored repository (`/stored?repo=<repo>`)
 
@@ -90,7 +100,8 @@ The scan form (empty), then the repository name, a summary line (skill count, co
 and a *View on GitHub* link for GitHub repositories), a **Rescan** link to
 `/?repo=<repo>`, and an output panel whose text is exactly what
 `skill-atlas list --repo <repo> --color never` prints. The title bar shows that command. As on the
-scan result page, the panel has a filter field when the repository has at least one stored skill.
+scan result page, the panel has a filter field when the repository has at least one stored skill,
+and each skill has a star button after its name.
 
 Each skill's **name**, in the output panel, links to
 `/similar?repo=<repo>&path=<path of that skill>` — see *Similar skills* below. Unlike the path's
@@ -100,7 +111,8 @@ link is part of the same output panel, whose text keeps matching the CLI exactly
 ### Similar skills (`/similar?repo=<repo>&path=<path>`)
 
 The scan form (empty), then a breadcrumb back to the skill's repository
-(`/stored?repo=<repo>`), the skill's name and path, and a list of similar skills — see
+(`/stored?repo=<repo>`), the skill's name and path, a large star button (`☆ Star · N` /
+`★ Starred · N`, see *Stars*), and a list of similar skills — see
 *Similar skills* below. Each entry links to `/stored?repo=<that skill's repo>`. With no
 result above the threshold, the page says so instead of showing an empty list.
 The title is `Similar to <skill name> · skill-atlas`.
@@ -119,8 +131,9 @@ used by `/stored` for an unknown repository, offering to scan `repo` when one wa
 - Keyboard: the input is focused on the home page; `/` focuses it from anywhere on the page.
 - Every page has exactly one `<input>` for the repository URL. An output panel that lists at
   least one skill also has a second, JS-only input: the skill filter (see *Skill filter*).
-- JavaScript is only an enhancement (Copy button, `/` shortcut, *Scanning…* state, skill filter);
-  every page works without it — the filter input is `hidden` until JS unhides it.
+- JavaScript is only an enhancement (Copy button, `/` shortcut, *Scanning…* state, skill filter,
+  starring without a page reload); every page works without it — the filter input is `hidden` until
+  JS unhides it, and star buttons submit a plain form.
 - No external requests: fonts, CSS, JS and the icon are inline.
 
 ## Output
@@ -172,6 +185,34 @@ filter only hides/shows elements already on the page.
 
 While a scan is running, the button shows *Scanning…* and is disabled.
 
+## Stars
+
+Anyone can star a stored skill, to say it's worth a look; the counts surface the most liked skills
+on the home page. There are no accounts:
+
+- **Who is a person.** A visitor is identified by a random id in the `skill_atlas_visitor` cookie
+  (`secrets.token_urlsafe(16)`, 22 characters; `Path=/; HttpOnly; SameSite=Lax`, kept for 5 years).
+  The cookie is set by the first star, never by just viewing a page. A missing or malformed cookie
+  means a new visitor. Each visitor has at most one star per skill: starring again keeps one star,
+  unstarring when not starred does nothing.
+- **What is starred.** A skill is identified by `(repo, path)`, like `/similar`. Stars live in their own
+  `stars` table (see *Data model* in [cli.md](cli.md)), so a rescan keeps them. A skill deleted upstream
+  stops being shown, and gets its stars back if it returns at the same path.
+- **Star buttons** appear after each skill's name in the output panels of the stored-repository page
+  and of a saved scan result, and next to the heading of the *Similar skills* page. A button shows
+  `☆ N` (`★ N` when this visitor starred it); its `aria-pressed` says whether this visitor starred it,
+  `aria-label` is `Star <name>` and `title` is `N star(s)`. The glyph and count are drawn by CSS from
+  `data-stars`, so the button adds **no text** to the `<pre>`, which still matches the CLI, and Copy
+  copies only the CLI text.
+- **Without JavaScript**, each button submits the page's one empty `<form id="star-form" method="post"
+  hidden>` with its own `formaction`: `POST /star?repo=&path=&star=1|0&next=<this page>`. No `<input>`
+  is added. The response is a `303` to `next`, which must be a path on this server (starts with one `/`,
+  printable ASCII, no `\`); anything else goes to `/stored?repo=<repo>`.
+- **With JavaScript**, a click sends the same `POST` with `Accept: application/json` and updates the
+  button in place from the `{"starred", "stars"}` answer (no reload, so a long list keeps its scroll
+  position). If that fails, the form is submitted normally, which shows the error page.
+- Stars are a lightweight signal, not a vote: clearing cookies or scripting requests can add stars.
+
 ## Similar skills
 
 Every stored skill can be compared against every other skill stored in the database, across all
@@ -207,6 +248,10 @@ Owner URLs are refused even with `--allow-local`: one request would clone every 
 organization (hundreds, for large ones) inside a single page load.
 The default bind address is `127.0.0.1`.
 
+Starring changes state, so it is a `POST`, and a `POST /star` whose `Origin` header names another
+host than `Host` is refused (`403`), so other sites can't star skills on a visitor's behalf. The
+redirect target `next` is restricted to this server's paths (no open redirect, no header injection).
+
 ## Components
 
 ```
@@ -217,10 +262,11 @@ web.py ──► cli.scan_repo() ──► (same pipeline as the CLI)
 
 | Module | Responsibility |
 |---|---|
-| `web.py` | `HtmlPainter` (a `Painter` that escapes HTML, emits `<span>`s, and renders `link()` as `<a>`), `_skill_wrap()` (the `data-name`/`data-desc` wrapper for the skill filter), the page renderers (`render_home()`, `render_scan()`, `render_stored()`, `render_similar()`, `render_not_found()`), the request handler, and `make_server()` |
+| `web.py` | `HtmlPainter` (a `Painter` that escapes HTML, emits `<span>`s, and renders `link()` as `<a>`), `_skill_wrap()` (the `data-name`/`data-desc` wrapper for the skill filter), `Stars` (counts + the visitor's stars; renders star buttons), the page renderers (`render_home()`, `render_scan()`, `render_stored()`, `render_similar()`, `render_not_found()`), the request handler (`GET` pages, `POST /star`), and `make_server()` |
 | `store.py` | `Store.repos()`: one `RepoEntry(repo, commit, scanned_at, skills)` per repository, most recent first |
+| `store.py` | `Store.set_star()`, `star_counts()`, `starred_by()`, `top_starred()`: see *Stars* |
 | `output.py` | `Painter.link(text, url, *styles)`: plain styled text in the terminal; `render_skills()` passes each path's GitHub URL through it |
-| `output.py` | `render_skills()` / `render_list()` take optional `name_url(skill)` (link the name, for *Similar skills*) and `wrap(skill, block)` (wrap each skill's block, for the filter) callbacks, used only by the web UI, without changing the CLI's plain-text output |
+| `output.py` | `render_skills()` / `render_list()` take optional `name_url(skill)` (link the name, for *Similar skills*), `name_suffix(skill)` (markup after the name, for the star button) and `wrap(skill, block)` (wrap each skill's block, for the filter) callbacks, used only by the web UI, without changing the CLI's plain-text output |
 | `repo.py` | `github_blob_url(repo, commit, path)`: the file's GitHub URL, or `None` for non-GitHub repos |
 | `similarity.py` | `find_similar(target, candidates, threshold)`: see *Similar skills* above |
 | `cli.py` | The `serve` subcommand. `scan_repo()` takes a `warn` callback so the web page can collect warnings instead of printing them |
@@ -255,3 +301,22 @@ row of the *HTTP interface* table, plus:
 - the page `<title>` for home and repository pages; the repository `<input>` is on every page, and
   the filter `<input>` is present (`data-filter`, `hidden`) only when the output lists a skill and
   absent for 0-skill scans/repositories; skill names/descriptions in `data-name`/`data-desc` are escaped
+
+`tests/test_stars.py` covers *Stars* with the same server, one test per `POST /star` row of the
+*HTTP interface* table, plus:
+- the stored page has one star button per skill, right after the name inside the `<pre>`, the `<pre>`
+  text is unchanged, the hidden `star-form` is present, and no `<input>` is added
+- the first star sets the visitor cookie (`Path=/`, `HttpOnly`, `SameSite=Lax`, `Max-Age`) and redirects
+  to `next`; the visitor then sees the button pressed with an unstar action, others see only the count
+- one star per visitor (starring twice keeps one), two visitors make two, unstarring (twice) removes one;
+  a known visitor gets no new cookie and a malformed cookie is replaced
+- the JSON answer, with the cookie set on it too
+- `next` falls back to the stored page when missing, empty, protocol-relative, absolute, containing
+  `\` or CR/LF, or not starting with `/`; `repo` accepts the `owner/name` shorthand
+- the *Similar skills* page's large button, which returns there; the scan page's buttons (returning to
+  the stored page) and their absence with `--no-store`; stars surviving a rescan
+- home: no *Most starred* without stars; order by stars, then repository and name; links to `/similar`;
+  `★ N`; escaping; still one `<input>`; skills deleted upstream are hidden
+
+`tests/test_store.py` covers the `Store` star methods: idempotence per visitor, counts, survival across
+rescans, and the *Most starred* order and limit.

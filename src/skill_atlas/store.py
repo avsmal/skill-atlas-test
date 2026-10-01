@@ -26,6 +26,13 @@ CREATE TABLE IF NOT EXISTS repos (
     commit_sha  TEXT NOT NULL,
     scanned_at  TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS stars (
+    repo        TEXT NOT NULL,
+    path        TEXT NOT NULL,
+    visitor     TEXT NOT NULL,
+    starred_at  TEXT NOT NULL,
+    PRIMARY KEY (repo, path, visitor)
+);
 """
 # Fill `repos` for a DB created before the table existed (a no-op afterwards, since
 # every repo with skills already has a row). SQLite takes commit_sha from the MAX row.
@@ -116,3 +123,47 @@ class Store:
             " GROUP BY r.repo ORDER BY r.scanned_at DESC, r.repo"
         )
         return [RepoEntry(*row) for row in rows]
+
+    def set_star(self, repo: str, path: str, visitor: str, starred: bool) -> int:
+        """Star (or unstar) a skill for ``visitor``; returns the skill's new star count.
+
+        Idempotent: starring twice keeps one star. Stars are keyed by ``(repo, path)``, not
+        tied to the ``skills`` row, so they survive rescans.
+        """
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        with self.conn:
+            if starred:
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO stars (repo, path, visitor, starred_at) VALUES (?, ?, ?, ?)",
+                    (repo, path, visitor, now),
+                )
+            else:
+                self.conn.execute(
+                    "DELETE FROM stars WHERE repo = ? AND path = ? AND visitor = ?", (repo, path, visitor),
+                )
+        return self.star_counts(repo).get((repo, path), 0)
+
+    def star_counts(self, repo: str | None = None) -> dict[tuple[str, str], int]:
+        """``(repo, path) -> number of stars``, for skills with at least one star."""
+        sql = "SELECT repo, path, COUNT(*) FROM stars"
+        params: tuple = ()
+        if repo:
+            sql += " WHERE repo = ?"
+            params = (repo,)
+        sql += " GROUP BY repo, path"
+        return {(r, p): n for r, p, n in self.conn.execute(sql, params)}
+
+    def starred_by(self, visitor: str) -> set[tuple[str, str]]:
+        """The ``(repo, path)`` of every skill ``visitor`` has starred."""
+        rows = self.conn.execute("SELECT repo, path FROM stars WHERE visitor = ?", (visitor,))
+        return set(rows)
+
+    def top_starred(self, limit: int = 10) -> list[tuple[Skill, int]]:
+        """Stored skills with at least one star, most stars first (ties: repo, then name)."""
+        rows = self.conn.execute(
+            "SELECT s.repo, s.name, s.description, s.commit_sha, s.path, s.duplicates, s.content,"
+            " COUNT(*) AS n FROM stars t JOIN skills s ON s.repo = t.repo AND s.path = t.path"
+            " GROUP BY s.repo, s.path ORDER BY n DESC, s.repo, s.name, s.path LIMIT ?",
+            (limit,),
+        )
+        return [(Skill(*row[:5], tuple(json.loads(row[5])), row[6]), row[7]) for row in rows]
