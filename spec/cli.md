@@ -206,7 +206,7 @@ cli.py ──► repo.py ──► discovery.py ──► parser.py ──► de
 | `dedupe.py` | `dedupe(skills)`: applies rule c (merges `.agents`/`.claude` copies within a prefix, records the merged paths in `duplicates`, and warns when contents differ) |
 | `parser.py` | `parse_frontmatter()` and `parse_skill()` → `(name, description, content)`. Raises `SkillParseError` on bad input |
 | `models.py` | The `Skill` dataclass |
-| `store.py` | The `Store` class: creates and migrates the schema, `replace_repo()`, `list()`, `repos()` |
+| `store.py` | The `Store` class: creates and migrates the schema, `replace_repo()`, `list()`, `repos()`, and the star methods used by the web UI |
 | `similarity.py` | `find_similar()`: skills similar to a given one, by description and content. See *Similar skills* in [web.md](web.md) |
 
 ### Fetching strategy
@@ -229,7 +229,7 @@ immediately instead of stopping to ask for a password.
 
 ## Data model
 
-SQLite, two tables:
+SQLite, three tables:
 
 ```sql
 CREATE TABLE skills (
@@ -249,7 +249,18 @@ CREATE TABLE repos (             -- one row per scanned repository, even with 0 
     commit_sha  TEXT NOT NULL,
     scanned_at  TEXT NOT NULL
 );
+
+CREATE TABLE stars (             -- one row per visitor who starred a skill in the web UI
+    repo        TEXT NOT NULL,
+    path        TEXT NOT NULL,   -- the skill's (repo, path), like skills' key
+    visitor     TEXT NOT NULL,   -- random id from the visitor's cookie
+    starred_at  TEXT NOT NULL,   -- ISO-8601 UTC
+    PRIMARY KEY (repo, path, visitor)
+);
 ```
+
+`stars` has no foreign key to `skills`: a scan replaces a repository's `skills` rows but never touches
+its stars, so stars survive rescans (see *Stars* in [web.md](web.md)). The CLI doesn't read it.
 
 `repos` is what the web catalogue lists (see [web.md](web.md)). A DB created before it existed gets it
 filled from `skills` when it is opened (repositories whose scan found 0 skills can't be recovered).
@@ -275,7 +286,7 @@ never creates duplicates, and skills that were deleted upstream disappear from t
 `pytest` covers:
 - the parser, discovery, and URL normalization (unit tests)
 - output: color decisions, number alignment, description wrapping
-- the store: replace semantics, filtering, the `repos` table (0-skill repos, ordering, backfill of an old DB), `duplicates` round trip, and adding the column to an old DB
+- the store: replace semantics, filtering, the `repos` table (0-skill repos, ordering, backfill of an old DB), stars (see [web.md](web.md)), `duplicates` round trip, and adding the column to an old DB
 - end-to-end `scan` and `list` against a local git fixture repo, cloned through a `file://` URL (no network)
 
 Edge-case tests (`tests/test_edge_cases.py`) build a fixture repo for each scenario and run the
