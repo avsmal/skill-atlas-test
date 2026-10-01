@@ -97,3 +97,44 @@ def test_old_db_backfills_repos(tmp_path):
     conn.close()
     with Store(db) as st:
         assert st.repos() == [RepoEntry("r", "c", "2026-01-01T00:00:00+00:00", 2)]
+
+
+def test_stars_are_per_visitor_and_idempotent(tmp_path):
+    a = Skill("r", "a", "d", "c", "a/SKILL.md")
+    with Store(tmp_path / "db.sqlite") as st:
+        st.replace_repo("r", [a])
+        assert st.set_star("r", "a/SKILL.md", "v1", True) == 1
+        assert st.set_star("r", "a/SKILL.md", "v1", True) == 1  # starring twice keeps one star
+        assert st.set_star("r", "a/SKILL.md", "v2", True) == 2
+        assert st.star_counts() == {("r", "a/SKILL.md"): 2}
+        assert st.starred_by("v1") == {("r", "a/SKILL.md")}
+        assert st.set_star("r", "a/SKILL.md", "v1", False) == 1
+        assert st.set_star("r", "a/SKILL.md", "v1", False) == 1  # unstarring twice is a no-op
+        assert st.starred_by("v1") == set()
+        assert st.star_counts("other") == {}
+
+
+def test_stars_survive_rescans(tmp_path):
+    a = Skill("r", "a", "d", "c1", "a/SKILL.md")
+    with Store(tmp_path / "db.sqlite") as st:
+        st.replace_repo("r", [a])
+        st.set_star("r", "a/SKILL.md", "v1", True)
+        st.replace_repo("r", [a])
+        assert st.top_starred() == [(a, 1)]
+        st.replace_repo("r", [])  # deleted upstream: no longer listed...
+        assert st.top_starred() == []
+        st.replace_repo("r", [a])  # ...and back with its stars when it returns
+        assert st.top_starred() == [(a, 1)]
+
+
+def test_top_starred_order_and_limit(tmp_path):
+    skills = [Skill(repo, n, "d", "c", f"{n}/SKILL.md") for repo, n in [("r2", "b"), ("r2", "a"), ("r1", "z"), ("r1", "y")]]
+    with Store(tmp_path / "db.sqlite") as st:
+        st.replace_repo("r1", [s for s in skills if s.repo == "r1"])
+        st.replace_repo("r2", [s for s in skills if s.repo == "r2"])
+        for s, n in zip(skills, [1, 1, 3, 0]):
+            for v in range(n):
+                st.set_star(s.repo, s.path, f"v{v}", True)
+        top = st.top_starred()
+        assert [(s.repo, s.name, n) for s, n in top] == [("r1", "z", 3), ("r2", "a", 1), ("r2", "b", 1)]
+        assert len(st.top_starred(limit=2)) == 2

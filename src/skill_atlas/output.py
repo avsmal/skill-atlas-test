@@ -57,6 +57,7 @@ def render_skills(
     show_source: bool = False,
     width: int | None = None,
     name_url: Callable[[Skill], str | None] | None = None,
+    name_suffix: Callable[[Skill], str] | None = None,
     wrap: Callable[[Skill, str], str] | None = None,
 ) -> str:
     """Numbered entries, one field per line; long descriptions are wrapped.
@@ -64,7 +65,8 @@ def render_skills(
     ``show_source`` adds the repo and commit lines (used by ``list``, where
     entries may come from several repositories). ``name_url(skill)``, when given, links
     each skill's name (used by the web UI's *Similar skills*; the terminal ignores it, like
-    the path's GitHub link).
+    the path's GitHub link). ``name_suffix(skill)``, when given, is markup appended right after
+    the name (used by the web UI for the star button; it must add no text).
 
     ``wrap``, if given, wraps each skill's rendered block (used by the web UI to
     attach a searchable container around it without changing the plain text).
@@ -93,7 +95,8 @@ def render_skills(
     for i, s in enumerate(skills, 1):
         number = paint(f"{i:>{num_w}}.", "yellow")
         name = paint.link(s.name, name_url(s) if name_url else None, "bold", "cyan", external=False)
-        lines = [f"{number} {name}"]
+        suffix = name_suffix(s) if name_suffix else ""
+        lines = [f"{number} {name}{suffix}"]
         lines += field("description", s.description or "—", wrap=True)
         lines += field("path", s.path, "green", url=github_blob_url(s.repo, s.commit, s.path))
         lines += [pad + path_line(s, p) for p in s.duplicates]  # merged .claude copies (rule c)
@@ -120,12 +123,15 @@ def render_list(
     *,
     width: int | None = None,
     name_url: Callable[[Skill], str | None] | None = None,
+    name_suffix: Callable[[Skill], str] | None = None,
     wrap: Callable[[Skill, str], str] | None = None,
 ) -> str:
     """What ``skill-atlas list`` prints: entries with their repo and commit, then a summary."""
     if not skills:
         return paint("No skills stored", "yellow")
-    entries = render_skills(skills, paint, show_source=True, width=width, name_url=name_url, wrap=wrap)
+    entries = render_skills(
+        skills, paint, show_source=True, width=width, name_url=name_url, name_suffix=name_suffix, wrap=wrap,
+    )
     return f"{entries}\n\n{paint(f'{len(skills)} skill(s) stored', 'bold', 'green')}"
 
 

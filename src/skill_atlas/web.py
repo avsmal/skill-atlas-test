@@ -5,10 +5,15 @@ See spec/web.md.
 from __future__ import annotations
 
 import html
+import json
+import re
+import secrets
 import shlex
+from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
 from http import HTTPStatus
+from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
@@ -21,6 +26,9 @@ from .store import Store
 
 WIDTH = 100
 NOT_ALLOWED = "only https:// repository URLs are accepted"
+VISITOR_COOKIE = "skill_atlas_visitor"
+_VISITOR_RE = re.compile(r"[A-Za-z0-9_-]{22}")  # secrets.token_urlsafe(16)
+_VISITOR_MAX_AGE = 5 * 365 * 24 * 3600
 
 
 class HtmlPainter(Painter):
@@ -46,9 +54,12 @@ class HtmlPainter(Painter):
 # --- Output (the <pre> text, identical to the CLI) -------------------------------------
 
 def run_scan(
-    repo_input: str, db: Path, *, store: bool, allow_local: bool,
+    repo_input: str, db: Path, *, store: bool, allow_local: bool, visitor: str | None = None,
 ) -> tuple[HTTPStatus, str, int]:
-    """Scan ``repo_input``; return the status, the HTML for the ``<pre>`` block, and the skill count."""
+    """Scan ``repo_input``; return the status, the HTML for the ``<pre>`` block, and the skill count.
+
+    When the result is saved, each skill gets a star button (``visitor``'s stars are shown pressed).
+    """
     from .cli import scan_repo  # imported lazily: cli imports this module for `serve`
 
     paint = HtmlPainter()
@@ -69,13 +80,16 @@ def run_scan(
     except RepoError as exc:
         text, count = error(str(exc))
         return HTTPStatus.BAD_GATEWAY, text, count
+    stars = None
     if store:
         with Store(db) as s:
             s.replace_repo(repo, skills, commit)
+            stars = Stars.load(s, repo, visitor, stored_url(repo))
 
     lines += [render_header(repo, commit, paint), ""]
     if skills:
-        lines += [render_skills(skills, paint, width=WIDTH, wrap=_skill_wrap), ""]
+        suffix = stars.button if stars else None
+        lines += [render_skills(skills, paint, width=WIDTH, name_suffix=suffix, wrap=_skill_wrap), ""]
     lines.append(render_summary(len(skills), paint))
     return HTTPStatus.OK, "\n".join(lines), len(skills)
 
@@ -105,6 +119,46 @@ def scan_url(repo: str) -> str:
 
 def similar_url(repo: str, path: str) -> str:
     return f"/similar?repo={quote(repo, safe='')}&path={quote(path, safe='')}"
+
+
+def star_url(repo: str, path: str, *, star: bool, next_url: str) -> str:
+    return (
+        f"/star?repo={quote(repo, safe='')}&path={quote(path, safe='')}"
+        f"&star={int(star)}&next={quote(next_url, safe='')}"
+    )
+
+
+def safe_next(next_url: str) -> str | None:
+    """``next_url`` if it's a path on this server (no open redirect, no header injection)."""
+    if not re.fullmatch(r"/(?!/)[!-~]*", next_url) or "\\" in next_url:
+        return None
+    return next_url
+
+
+@dataclass(frozen=True)
+class Stars:
+    """Star counts and the current visitor's stars, for rendering star buttons."""
+
+    counts: dict[tuple[str, str], int]
+    mine: set[tuple[str, str]]
+    next_url: str  # where the no-JS form submission returns to
+
+    @classmethod
+    def load(cls, store: Store, repo: str, visitor: str | None, next_url: str) -> "Stars":
+        mine = store.starred_by(visitor) if visitor else set()
+        return cls(store.star_counts(repo), mine, next_url)
+
+    def button(self, skill: Skill, *, big: bool = False) -> str:
+        """A star toggle with no text of its own (CSS draws ``☆ N``), so the ``<pre>`` text is unchanged."""
+        key = (skill.repo, skill.path)
+        count, starred = self.counts.get(key, 0), key in self.mine
+        action = star_url(skill.repo, skill.path, star=not starred, next_url=self.next_url)
+        cls = "star star--big" if big else "star"
+        return (
+            f'<button type="submit" class="{cls}" form="star-form" formaction="{e(action)}" data-star'
+            f' data-stars="{count}" aria-pressed="{str(starred).lower()}"'
+            f' aria-label="Star {e(skill.name)}" title="{plural(count, "star")}"></button>'
+        )
 
 
 def format_time(iso: str) -> str:
@@ -180,6 +234,7 @@ def _layout(title: str, body: str, *, repo_count: int) -> str:
 <main class="wrap">
 {body}
 </main>
+<form id="star-form" method="post" action="/star" hidden></form>
 <footer class="wrap"><p class="footer">
   Lists the <code>SKILL.md</code> files under <code>.agents/skills</code> and <code>.claude/skills</code>
   that a project's own developers use. Same engine as the <code>skill-atlas</code> CLI.
@@ -232,13 +287,34 @@ def _catalogue(entries: list[RepoEntry], *, store: bool) -> str:
 </section>"""
 
 
-def render_home(entries: list[RepoEntry], *, store: bool) -> str:
+def _top_starred(top: list[tuple[Skill, int]]) -> str:
+    if not top:
+        return ""
+    rows = "".join(f"""<li><a class="repo" href="{e(similar_url(skill.repo, skill.path))}">
+    <span class="repo__title"><span class="repo__name">{e(skill.name)}</span></span>
+    <span class="repo__meta">
+      <span class="badge badge--star">★ {count}</span>
+      <span class="muted">{e(display_repo(skill.repo))}</span>
+    </span>
+  </a></li>""" for skill, count in top)
+    return f"""
+<section class="starred" id="starred">
+  <div class="section-head"><h2>Most starred</h2></div>
+  <ul class="repo-list">
+  {rows}
+  </ul>
+</section>"""
+
+
+def render_home(
+    entries: list[RepoEntry], *, store: bool, top: list[tuple[Skill, int]] | None = None,
+) -> str:
     body = f"""<section class="hero">
   <h1>Find the agent skills a repository uses</h1>
   <p class="lede">Paste a GitHub repository. skill-atlas checks out only its
   <code>.agents/skills</code> and <code>.claude/skills</code> folders and lists every skill at the current commit.</p>
   {_form(hero=True)}
-</section>
+</section>{_top_starred(top or [])}
 {_catalogue(entries, store=store)}"""
     return _layout("skill-atlas", body, repo_count=len(entries))
 
@@ -282,7 +358,9 @@ def render_stored(entry: RepoEntry, output: str, *, repo_count: int) -> str:
     return _layout(f"{shown} · skill-atlas", body, repo_count=repo_count)
 
 
-def render_similar(skill: Skill, results: list[tuple[Skill, float]], *, repo_count: int) -> str:
+def render_similar(
+    skill: Skill, results: list[tuple[Skill, float]], *, star_button: str, repo_count: int,
+) -> str:
     if results:
         rows = "".join(f"""<li><a class="repo" href="{e(stored_url(other.repo))}">
     <span class="repo__title"><span class="repo__name">{e(other.name)}</span></span>
@@ -301,7 +379,10 @@ def render_similar(skill: Skill, results: list[tuple[Skill, float]], *, repo_cou
 <section class="repo-head">
   <p class="crumbs"><a href="{e(stored_url(skill.repo))}">{e(display_repo(skill.repo))}</a> <span aria-hidden="true">/</span></p>
   <h1>Similar to {e(skill.name)}</h1>
-  <p class="facts"><code>{e(skill.path)}</code></p>
+  <div class="repo-head__row">
+    <p class="facts"><code>{e(skill.path)}</code></p>
+    <div class="actions">{star_button}</div>
+  </div>
 </section>
 <section class="similar">
   <div class="section-head"><h2>Similar skills</h2></div>
@@ -310,7 +391,9 @@ def render_similar(skill: Skill, results: list[tuple[Skill, float]], *, repo_cou
     return _layout(f"Similar to {skill.name} · skill-atlas", body, repo_count=repo_count)
 
 
-def render_not_found(message: str, *, repo: str | None = None, repo_count: int) -> str:
+def render_not_found(
+    message: str, *, repo: str | None = None, repo_count: int, title: str = "Not found",
+) -> str:
     action = (
         f'<a class="btn" href="{e(scan_url(repo))}">Scan it</a>' if repo
         else '<a class="btn" href="/">Go home</a>'
@@ -320,7 +403,7 @@ def render_not_found(message: str, *, repo: str | None = None, repo_count: int) 
   <p><strong>{e(message)}</strong></p>
   <p>{action}</p>
 </section>"""
-    return _layout("Not found · skill-atlas", body, repo_count=repo_count)
+    return _layout(f"{title} · skill-atlas", body, repo_count=repo_count)
 
 
 # --- HTTP -------------------------------------------------------------------------------
@@ -347,11 +430,29 @@ class Handler(BaseHTTPRequestHandler):
                 f"Page not found: {url.path}", repo_count=len(self._repos()),
             ))
 
+    def do_POST(self) -> None:
+        length = int(self.headers.get("Content-Length") or 0)
+        if length:
+            self.rfile.read(min(length, 65536))  # the star form sends no fields; drain any body
+        url = urlsplit(self.path)
+        if url.path == "/star":
+            self._star(parse_qs(url.query))
+        else:
+            self._send(HTTPStatus.NOT_FOUND, render_not_found(
+                f"Page not found: {url.path}", repo_count=len(self._repos()),
+            ))
+
     def _index(self, repo_input: str) -> None:
         if not repo_input:
-            self._send(HTTPStatus.OK, render_home(self._repos(), store=self.store))
+            top: list[tuple[Skill, int]] = []
+            if self.db.exists():
+                with Store(self.db) as s:
+                    top = s.top_starred()
+            self._send(HTTPStatus.OK, render_home(self._repos(), store=self.store, top=top))
             return
-        status, output, skill_count = run_scan(repo_input, self.db, store=self.store, allow_local=self.allow_local)
+        status, output, skill_count = run_scan(
+            repo_input, self.db, store=self.store, allow_local=self.allow_local, visitor=self._visitor(),
+        )
         self._send(status, render_scan(
             repo_input, status, output, repo_count=len(self._repos()), skill_count=skill_count,
         ))
@@ -370,35 +471,88 @@ class Handler(BaseHTTPRequestHandler):
             return
         with Store(self.db) as s:
             skills = s.list(repo)
+            stars = Stars.load(s, repo, self._visitor(), stored_url(repo))
         output = render_list(
             skills, HtmlPainter(), width=WIDTH,
-            name_url=lambda sk: similar_url(sk.repo, sk.path), wrap=_skill_wrap,
+            name_url=lambda sk: similar_url(sk.repo, sk.path), name_suffix=stars.button, wrap=_skill_wrap,
         )
         self._send(HTTPStatus.OK, render_stored(entry, output, repo_count=len(entries)))
 
     def _similar(self, repo_input: str, path: str) -> None:
+        skill, entries = self._stored_skill(repo_input, path)
+        if skill is None:
+            return
+        with Store(self.db) as s:
+            candidates = s.list()
+            stars = Stars.load(s, skill.repo, self._visitor(), similar_url(skill.repo, skill.path))
+        results = find_similar(skill, candidates)
+        self._send(HTTPStatus.OK, render_similar(
+            skill, results, star_button=stars.button(skill, big=True), repo_count=len(entries),
+        ))
+
+    def _star(self, query: dict[str, list[str]]) -> None:
+        origin = self.headers.get("Origin")
+        if origin is not None and urlsplit(origin).netloc != self.headers.get("Host"):
+            self._send(HTTPStatus.FORBIDDEN, render_not_found(
+                "Stars can only be given from this site's own pages.",
+                repo_count=len(self._repos()), title="Forbidden",
+            ))
+            return
+        star = (query.get("star") or [""])[0]
+        if star not in ("0", "1"):
+            self._send(HTTPStatus.BAD_REQUEST, render_not_found(
+                "star must be 1 (star) or 0 (unstar).", repo_count=len(self._repos()), title="Bad request",
+            ))
+            return
+        skill, _ = self._stored_skill((query.get("repo") or [""])[0].strip(), (query.get("path") or [""])[0])
+        if skill is None:
+            return
+        visitor = self._visitor()
+        headers = {}
+        if visitor is None:
+            visitor = secrets.token_urlsafe(16)
+            headers["Set-Cookie"] = (
+                f"{VISITOR_COOKIE}={visitor}; Path=/; Max-Age={_VISITOR_MAX_AGE}; HttpOnly; SameSite=Lax"
+            )
+        with Store(self.db) as s:
+            count = s.set_star(skill.repo, skill.path, visitor, star == "1")
+        if "application/json" in self.headers.get("Accept", ""):
+            body = json.dumps({"starred": star == "1", "stars": count})
+            self._send(HTTPStatus.OK, body, content_type="application/json", headers=headers)
+            return
+        next_url = safe_next((query.get("next") or [""])[0]) or stored_url(skill.repo)
+        self._send(HTTPStatus.SEE_OTHER, "", headers={**headers, "Location": next_url})
+
+    def _stored_skill(self, repo_input: str, path: str) -> tuple[Skill | None, list[RepoEntry]]:
+        """The stored skill at ``repo_input``/``path``; sends the 404 page and returns ``None`` if there's none."""
         entries = self._repos()
         if not repo_input or not path:
             self._send(HTTPStatus.NOT_FOUND, render_not_found("No skill given.", repo_count=len(entries)))
-            return
+            return None, entries
         repo = normalize_repo_url(repo_input)
         entry = next((r for r in entries if r.repo == repo), None)
         if entry is None:
             self._send(HTTPStatus.NOT_FOUND, render_not_found(
                 f"{display_repo(repo)} isn't in the catalogue yet.", repo=repo, repo_count=len(entries),
             ))
-            return
+            return None, entries
         with Store(self.db) as s:
             skill = next((sk for sk in s.list(repo) if sk.path == path), None)
         if skill is None:
             self._send(HTTPStatus.NOT_FOUND, render_not_found(
                 f"{path} isn't a stored skill of {display_repo(repo)}.", repo=repo, repo_count=len(entries),
             ))
-            return
-        with Store(self.db) as s:
-            candidates = s.list()
-        results = find_similar(skill, candidates)
-        self._send(HTTPStatus.OK, render_similar(skill, results, repo_count=len(entries)))
+        return skill, entries
+
+    def _visitor(self) -> str | None:
+        """The visitor id from the star cookie, if it has a valid one."""
+        try:
+            morsel = SimpleCookie(self.headers.get("Cookie", "")).get(VISITOR_COOKIE)
+        except CookieError:
+            return None
+        if morsel is None or not _VISITOR_RE.fullmatch(morsel.value):
+            return None
+        return morsel.value
 
     def _repos(self) -> list[RepoEntry]:
         # Don't create a DB just to show an empty catalogue (--no-store must leave no file behind).
@@ -407,11 +561,16 @@ class Handler(BaseHTTPRequestHandler):
         with Store(self.db) as s:
             return s.repos()
 
-    def _send(self, status: HTTPStatus, body: str) -> None:
+    def _send(
+        self, status: HTTPStatus, body: str, *,
+        content_type: str = "text/html; charset=utf-8", headers: dict[str, str] | None = None,
+    ) -> None:
         data = body.encode("utf-8")
         self.send_response(status)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(data)
 
@@ -533,6 +692,21 @@ main.wrap { padding-top: 32px; padding-bottom: 48px; }
 .term__filter-input:focus { border-color: var(--accent); }
 .term__filter-input::placeholder { color: #6b7280; }
 .skill--hidden { display: none; }
+.star { margin-left: 10px; padding: 0 8px; height: 20px; vertical-align: 1px; font: 12px/18px var(--mono);
+        color: #9aa3b2; background: transparent; border: 1px solid var(--term-border); border-radius: 999px;
+        cursor: pointer; }
+.star::before { content: "☆ " attr(data-stars); }
+.star:hover { background: #222834; color: var(--term-fg); }
+.star[aria-pressed="true"] { color: #e0af68; border-color: rgba(224, 175, 104, .45); }
+.star[aria-pressed="true"]::before { content: "★ " attr(data-stars); }
+.star:disabled { opacity: .6; cursor: progress; }
+.star:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.star--big { margin: 0; height: 36px; padding: 0 14px; font: 600 14px/34px system-ui, sans-serif; vertical-align: 0;
+             color: var(--text); border-color: var(--border); border-radius: var(--radius); }
+.star--big::before { content: "☆ Star · " attr(data-stars); }
+.star--big[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+.star--big[aria-pressed="true"]::before { content: "★ Starred · " attr(data-stars); }
+.star--big:hover { background: var(--surface-2); color: var(--text); }
 .term__empty { margin: 0; padding: 4px 20px 18px; color: var(--muted); font: 13px var(--mono); }
 .output { margin: 0; padding: 18px 20px; overflow-x: auto; color: var(--term-fg); tab-size: 4;
           font: 13px/1.55 var(--mono); }
@@ -563,6 +737,7 @@ main.wrap { padding-top: 32px; padding-bottom: 48px; }
 .badge { font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; background: var(--accent-soft);
          color: var(--accent); white-space: nowrap; }
 .badge--zero { background: var(--surface-2); color: var(--muted); }
+.badge--star { background: rgba(224, 175, 104, .14); color: #e0af68; }
 .empty { border: 1px dashed var(--border); border-radius: var(--radius); padding: 28px; text-align: center; color: var(--muted); }
 .empty p { margin: 4px 0; }
 .empty strong { color: var(--text); }
@@ -581,6 +756,7 @@ main.wrap { padding-top: 32px; padding-bottom: 48px; }
 .actions { display: flex; gap: 8px; }
 
 .similar { margin-top: 32px; }
+.starred { margin-top: 40px; }
 
 .footer { margin: 0; color: var(--muted); font-size: 13px; padding: 20px 0 32px; border-top: 1px solid var(--border); }
 
@@ -631,6 +807,28 @@ _JS = """
         if (match) visible++;
       });
       if (empty) empty.hidden = visible > 0;
+    });
+  });
+  document.querySelectorAll('[data-star]').forEach(btn => {
+    if (!window.fetch) return;
+    btn.addEventListener('click', async ev => {
+      ev.preventDefault();
+      btn.disabled = true;
+      try {
+        const res = await fetch(btn.formAction, { method: 'POST', headers: { Accept: 'application/json' } });
+        if (!res.ok) throw new Error(res.statusText);
+        const data = await res.json();
+        const url = new URL(btn.formAction);
+        url.searchParams.set('star', data.starred ? '0' : '1');
+        btn.formAction = url.href;
+        btn.dataset.stars = data.stars;
+        btn.setAttribute('aria-pressed', String(data.starred));
+        btn.title = data.stars + (data.stars === 1 ? ' star' : ' stars');
+        btn.disabled = false;
+      } catch {
+        btn.disabled = false;
+        btn.form.requestSubmit(btn);  // fall back to the no-JS round trip, which shows any error page
+      }
     });
   });
   document.querySelectorAll('[data-copy]').forEach(btn => {
