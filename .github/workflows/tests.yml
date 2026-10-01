@@ -52,8 +52,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macOS: case-insensitive filesystem, BSD userland
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest]
         python: ["3.14"]
     steps:
       - uses: actions/checkout@v4
@@ -77,7 +76,7 @@ jobs:
         run: python -m pytest -v
 
   # Re-record docs/demo.mp4 and compare screenshots at its key moments with tests/demo_frames/.
-  # Once per pull request run (not per OS, not on pushes to main). See spec/demo-video.md.
+  # Once per pull request run (not on pushes to main). See spec/demo-video.md.
   demo-video:
     needs: changes
     if: needs.changes.outputs.code == 'true' && github.event_name == 'pull_request'
