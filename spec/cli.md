@@ -386,14 +386,13 @@ cases (CRLF, BOM, symlinks) survive: `tests/fixtures/.gitattributes` sets `-text
 
 ### Continuous integration
 
-`.github/workflows/tests.yml` runs `pytest` on every push to `main`, on every pull request, and on demand:
-- Ubuntu with Python 3.14
-- macOS (case-insensitive filesystem) with Python 3.14
+`.github/workflows/tests.yml` runs `pytest` on every push to `main`, on every pull request, and on demand,
+on Ubuntu with Python 3.14. macOS is not tested in CI.
 
 Before the tests run, it checks that the fixture's symlinks and CRLF bytes survived the checkout.
 
 A `changes` job runs first. If every file changed by the push or pull request is Markdown (`*.md`)
-outside `tests/` (docs, `spec/`, `memory/`), the `pytest` jobs are skipped; a skipped job counts as
+outside `tests/` (docs, `spec/`, `memory/`), the `pytest` job is skipped; a skipped job counts as
 passing, so the PR still gets a green check. Markdown under `tests/` is fixture data and runs the
 tests. Manual runs, new branches and pushes whose base commit is unknown always run the tests.
 Per `AGENTS.md`, a change is done only when CI is green for its commit.
