@@ -9,23 +9,29 @@ import json
 import re
 import secrets
 import shlex
-from dataclasses import dataclass
+from contextlib import closing
+from dataclasses import dataclass, replace
 from datetime import datetime
 from functools import partial
 from http import HTTPStatus
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Iterator
 from urllib.parse import parse_qs, quote, urlsplit
 
 from .models import RepoEntry, Skill
-from .output import Painter, render_header, render_list, render_skills, render_summary
-from .repo import RepoError, github_owner_url, github_slug, normalize_repo_url
+from .output import (
+    Painter, render_header, render_list, render_owner_header, render_owner_summary, render_skills, render_summary,
+)
+from .repo import RepoError, github_owner_url, github_slug, list_owner_repos, normalize_repo_url
 from .similarity import DEFAULT_THRESHOLD, find_similar
 from .store import Store
 
 WIDTH = 100
 NOT_ALLOWED = "only https:// repository URLs are accepted"
+OWNER_JOBS = 4  # an organization scan clones this many repositories at once, like the CLI's --jobs default
+_OUTPUT_SLOT = "\x00output\x00"  # where the streamed output goes in an organization scan's page
 VISITOR_COOKIE = "skill_atlas_visitor"
 _VISITOR_RE = re.compile(r"[A-Za-z0-9_-]{22}")  # secrets.token_urlsafe(16)
 _VISITOR_MAX_AGE = 5 * 365 * 24 * 3600
@@ -72,9 +78,6 @@ def run_scan(
         lines.append(f"{paint('error:', 'bold', 'red')} {paint(msg)}")
         return "\n".join(lines), 0
 
-    if owner := github_owner_url(repo_input):
-        text, count = error(f"organizations can only be scanned from the CLI: skill-atlas scan {owner}")
-        return HTTPStatus.BAD_REQUEST, text, count
     if not allow_local and not normalize_repo_url(repo_input).startswith("https://"):
         text, count = error(NOT_ALLOWED)
         return HTTPStatus.BAD_REQUEST, text, count
@@ -95,6 +98,51 @@ def run_scan(
         lines += [render_skills(skills, paint, width=WIDTH, name_suffix=suffix, wrap=_skill_wrap), ""]
     lines.append(render_summary(len(skills), paint))
     return HTTPStatus.OK, "\n".join(lines), len(skills)
+
+
+def owner_scan_output(
+    owner: str, repos: list[str], forks: int, db: Path, *, store: bool, visitor: str | None = None,
+) -> Iterator[str]:
+    """The ``<pre>`` HTML of an organization scan, piece by piece as each repository finishes.
+
+    The text is what ``skill-atlas scan <owner> --color never`` prints, with each repository's
+    ``warning:``/``error:`` lines before its block, as a terminal shows them. After each repository
+    an empty ``<i class="tick">`` carries the progress (CSS draws it; it adds no text). Closing the
+    generator early cancels the repositories still queued.
+    """
+    from .cli import scan_owner_repos  # imported lazily: cli imports this module for `serve`
+
+    paint = HtmlPainter()
+    stars = None
+    if store and db.exists():
+        with Store(db) as s:
+            stars = Stars.load(s, None, visitor, "/")
+    elif store:
+        stars = Stars({}, set(), "/")
+
+    def tick(done: int) -> str:
+        return f'<i class="tick" data-done="{done}" data-total="{len(repos)}"></i>'
+
+    yield render_owner_header(owner, len(repos), forks, paint) + tick(0)
+    found = with_skills = failed = 0
+    with closing(scan_owner_repos(repos, jobs=OWNER_JOBS, db=db if store else None)) as results:
+        for done, (repo, commit, skills, warnings, err) in enumerate(results, 1):
+            out = [f"\n{paint('warning:', 'bold', 'yellow')} {paint(f'{repo}: {msg}')}" for msg in warnings]
+            if err is not None:
+                out.append(f"\n{paint('error:', 'bold', 'red')} {paint(f'{repo}: {err}')}")
+                failed += 1
+            elif skills:
+                found += len(skills)
+                with_skills += 1
+                suffix = replace(stars, next_url=stored_url(repo)).button if stars else None
+                out.append(
+                    f"\n\n{render_header(repo, commit, paint)}\n\n"
+                    f"{render_skills(skills, paint, width=WIDTH, name_suffix=suffix, wrap=_skill_wrap)}\n\n"
+                    f"{render_summary(len(skills), paint)}"
+                )
+            yield "".join(out) + tick(done)
+    summary = render_owner_summary(found, with_skills, len(repos), failed, paint)
+    yield f'\n\n{summary}<i class="tick tick--done"></i>'
 
 
 # --- Pages ------------------------------------------------------------------------------
@@ -147,7 +195,7 @@ class Stars:
     next_url: str  # where the no-JS form submission returns to
 
     @classmethod
-    def load(cls, store: Store, repo: str, visitor: str | None, next_url: str) -> "Stars":
+    def load(cls, store: Store, repo: str | None, visitor: str | None, next_url: str) -> "Stars":
         mine = store.starred_by(visitor) if visitor else set()
         return cls(store.star_counts(repo), mine, next_url)
 
@@ -335,6 +383,15 @@ def render_scan(
     return _layout(title, body, repo_count=repo_count)
 
 
+def render_owner_scan(repo_input: str, owner: str, *, repo_count: int) -> tuple[str, str]:
+    """An organization scan's page, split where its streamed ``<pre>`` content goes: ``(head, tail)``."""
+    # the filter field is always there: whether a skill turns up isn't known yet (JS shows it only if one does)
+    body = f"""{_form(repo_input)}
+{_terminal(f"skill-atlas scan {shlex.quote(repo_input)}", _OUTPUT_SLOT, filterable=True)}"""
+    head, tail = _layout(f"{owner.rsplit('/', 1)[1]} · skill-atlas", body, repo_count=repo_count).split(_OUTPUT_SLOT)
+    return head, tail
+
+
 def render_stored(entry: RepoEntry, output: str, *, repo_count: int) -> str:
     shown = display_repo(entry.repo)
     github = (
@@ -453,12 +510,42 @@ class Handler(BaseHTTPRequestHandler):
                     top = s.top_starred()
             self._send(HTTPStatus.OK, render_home(self._repos(), store=self.store, top=top))
             return
+        if owner := github_owner_url(repo_input):
+            self._owner_scan(repo_input, owner)
+            return
         status, output, skill_count = run_scan(
             repo_input, self.db, store=self.store, allow_local=self.allow_local, visitor=self._visitor(),
         )
         self._send(status, render_scan(
             repo_input, status, output, repo_count=len(self._repos()), skill_count=skill_count,
         ))
+
+    def _owner_scan(self, repo_input: str, owner: str) -> None:
+        """Streams the page: each repository's block is sent as soon as it's scanned (see spec/web.md)."""
+        try:
+            repos, forks = list_owner_repos(owner)
+        except RepoError as exc:
+            paint = HtmlPainter()
+            output = f"{paint('error:', 'bold', 'red')} {paint(str(exc))}"
+            self._send(HTTPStatus.BAD_GATEWAY, render_scan(
+                repo_input, HTTPStatus.BAD_GATEWAY, output, repo_count=len(self._repos()), skill_count=0,
+            ))
+            return
+        head, tail = render_owner_scan(repo_input, owner, repo_count=len(self._repos()))
+        output = owner_scan_output(owner, repos, forks, self.db, store=self.store, visitor=self._visitor())
+        # HTTP/1.0 without Content-Length: the body ends when the connection closes
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        with closing(output):
+            try:
+                self.wfile.write(head.encode("utf-8"))
+                for chunk in output:
+                    self.wfile.write(chunk.encode("utf-8"))
+                self.wfile.write(tail.encode("utf-8"))
+            except ConnectionError:
+                self.close_connection = True  # the visitor left: closing `output` cancels the queued repositories
 
     def _stored(self, repo_input: str) -> None:
         entries = self._repos()
@@ -710,6 +797,10 @@ main.wrap { padding-top: 32px; padding-bottom: 48px; }
 .star--big[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
 .star--big[aria-pressed="true"]::before { content: "★ Starred · " attr(data-stars); }
 .star--big:hover { background: var(--surface-2); color: var(--text); }
+.output .tick { display: none; }
+.output .tick:last-of-type:not(.tick--done) { display: block; color: var(--muted); font-style: normal; }
+.output .tick:last-of-type:not(.tick--done)::after {
+  content: "Scanning\\2026 " attr(data-done) " of " attr(data-total) " repositories done"; }
 .term__empty { margin: 0; padding: 4px 20px 18px; color: var(--muted); font: 13px var(--mono); }
 .output { margin: 0; padding: 18px 20px; overflow-x: auto; color: var(--term-fg); tab-size: 4;
           font: 13px/1.55 var(--mono); }
@@ -800,6 +891,7 @@ _JS = """
     const term = input.closest('.term');
     const skills = term.querySelectorAll('.skill');
     const empty = term.querySelector('[data-filter-empty]');
+    if (!skills.length) return;  // an organization scan that found no skill
     input.hidden = false;
     input.addEventListener('input', () => {
       const q = input.value.trim().toLowerCase();

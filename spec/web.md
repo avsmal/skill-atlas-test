@@ -18,6 +18,8 @@ skill-atlas web UI on http://127.0.0.1:8000/
 ```
 
 Open the URL, type a repository (`https://github.com/JetBrains/kotlin`, `JetBrains/kotlin`, …) and press **Scan**.
+An organization or user URL (`https://github.com/JetBrains`) scans all of its repositories; see
+*Scanning an organization*.
 
 ### Options
 
@@ -39,7 +41,8 @@ The server uses only the Python standard library (`http.server`, threaded); no n
 | `GET /?repo=` (empty or whitespace) | Same as `GET /`. `200` |
 | `GET /?repo=<repo>` | Scans `<repo>` and returns the page with the input filled in and the output below it. `200` |
 | `GET /?repo=<repo>` where the URL is not allowed | Page with `error: only https:// repository URLs are accepted`. `400`, nothing is cloned |
-| `GET /?repo=<owner URL>` (an organization or user, see *Scanning an organization* in [cli.md](cli.md)) | Page with `error: organizations can only be scanned from the CLI: skill-atlas scan <owner URL>`. `400`, nothing is cloned |
+| `GET /?repo=<owner URL>` (an organization or user, see *Scanning an organization* in [cli.md](cli.md)) | Scans every repository of that owner, streaming the page as each one finishes (see *Scanning an organization*). `200`, with or without `--allow-local` |
+| `GET /?repo=<owner URL>` where the repository list can't be fetched (unknown owner, GitHub API error) | Page with `error: <reason>`, the same text as the CLI. `502`, nothing is cloned |
 | `GET /?repo=<repo>` where the clone fails | Page with `error: <git stderr>`. `502`, DB unchanged |
 | `GET /stored?repo=<repo>` | The stored skills of `<repo>`, read from the DB (no clone). `200` |
 | `GET /stored?repo=<repo>` for a repo not in the DB, or with no `repo` | Page saying it isn't in the catalogue, with a *Scan it* link. `404` |
@@ -185,6 +188,38 @@ filter only hides/shows elements already on the page.
 
 While a scan is running, the button shows *Scanning…* and is disabled.
 
+## Scanning an organization
+
+`/?repo=<owner URL>` (the owner forms of *Scanning an organization* in [cli.md](cli.md)) does what
+`skill-atlas scan <owner URL>` does: list the owner's repositories with the GitHub API, skip forks,
+scan every repository, 4 at a time (the CLI's `--jobs` default), in name order, and store each one as
+it finishes (unless the server runs with `--no-store`). There is no `--include-forks` or `--jobs` in
+the web UI: those stay CLI options.
+
+- **Streaming.** A large organization has hundreds of repositories, so the page isn't held back until
+  the end. The response (`HTTP/1.0`, no `Content-Length`, `Cache-Control: no-store`, ending when the
+  connection closes) sends the page up to the output panel's `<pre>` at once, then each repository's
+  block as soon as that repository is scanned, then the summary and the rest of the page. The status is
+  `200` once the repository list is fetched; a repository that fails to clone is an `error:` line in the
+  output, as in the CLI, not a different status.
+- **Leaving the page cancels the scan.** When the visitor closes the tab or navigates away, the next
+  write fails, the repositories still queued are not cloned (clones already running finish), and the
+  repositories already scanned stay stored, like Ctrl-C in the CLI.
+- **Output.** The `<pre>` text is what `skill-atlas scan <owner URL> --color never` prints, with each
+  repository's `warning: <repo>: …` and `error: <repo>: …` lines just before that repository's block,
+  where a terminal shows them (`2>&1`). Repositories with 0 skills aren't printed, but are stored, so the
+  catalogue lists them. Paths link to GitHub as on the scan result page.
+- **Progress.** After the header and after each repository, the stream adds an empty
+  `<i class="tick" data-done="K" data-total="N">` to the `<pre>`. CSS shows only the last one, as
+  *Scanning… K of N repositories done*, from its attributes, so it adds no text to the `<pre>` (Copy and
+  the CLI comparison are unaffected). The stream ends with `<i class="tick tick--done">`, which hides it.
+- **Stars and filter.** When the result is saved, each skill has a star button, which returns to that
+  skill's stored-repository page (`next=/stored?repo=<its repo>`). The filter field is always in the
+  panel's title bar (`hidden`), since the page starts before any skill is found; the script, which runs
+  when the page is complete, unhides it only if the output lists a skill. Filtering hides skills, not the
+  repository headers.
+- The page title is `<owner> · skill-atlas`; the panel's title bar shows `$ skill-atlas scan <input>`.
+
 ## Stars
 
 Anyone can star a stored skill, to say it's worth a look; the counts surface the most liked skills
@@ -244,8 +279,11 @@ The server clones whatever URL a visitor types, so by default only URLs that nor
 `https://…` are accepted. This rules out `file://` (reading the server's own disk), `ssh`/`git@`
 URLs other than GitHub's, which normalize to `https://` (using the server's SSH keys), `ext::` transports, and arguments starting with `-` that git
 would read as options. `--allow-local` lifts the restriction and is meant for local use and tests.
-Owner URLs are refused even with `--allow-local`: one request would clone every repository of an
-organization (hundreds, for large ones) inside a single page load.
+An owner URL makes one request clone every repository of an organization (hundreds, for large
+ones). The clones are limited to 4 at a time per request, the scan stops when the visitor leaves the
+page (see *Scanning an organization*), and only `https://github.com/<owner>/<name>` repositories from
+the GitHub API are cloned, whatever `--allow-local` says. Each owner scan uses one GitHub API request
+per 100 repositories (60 an hour without `GITHUB_TOKEN`, see [cli.md](cli.md)).
 The default bind address is `127.0.0.1`.
 
 Starring changes state, so it is a `POST`, and a `POST /star` whose `Origin` header names another
@@ -262,14 +300,14 @@ web.py ──► cli.scan_repo() ──► (same pipeline as the CLI)
 
 | Module | Responsibility |
 |---|---|
-| `web.py` | `HtmlPainter` (a `Painter` that escapes HTML, emits `<span>`s, and renders `link()` as `<a>`), `_skill_wrap()` (the `data-name`/`data-desc` wrapper for the skill filter), `Stars` (counts + the visitor's stars; renders star buttons), the page renderers (`render_home()`, `render_scan()`, `render_stored()`, `render_similar()`, `render_not_found()`), the request handler (`GET` pages, `POST /star`), and `make_server()` |
+| `web.py` | `HtmlPainter` (a `Painter` that escapes HTML, emits `<span>`s, and renders `link()` as `<a>`), `_skill_wrap()` (the `data-name`/`data-desc` wrapper for the skill filter), `Stars` (counts + the visitor's stars; renders star buttons), `owner_scan_output()` (an organization scan's `<pre>` HTML, one piece per repository), the page renderers (`render_home()`, `render_scan()`, `render_owner_scan()` (the page split around its streamed output), `render_stored()`, `render_similar()`, `render_not_found()`), the request handler (`GET` pages, the streamed organization scan, `POST /star`), and `make_server()` |
 | `store.py` | `Store.repos()`: one `RepoEntry(repo, commit, scanned_at, skills)` per repository, most recent first |
 | `store.py` | `Store.set_star()`, `star_counts()`, `starred_by()`, `top_starred()`: see *Stars* |
 | `output.py` | `Painter.link(text, url, *styles)`: plain styled text in the terminal; `render_skills()` passes each path's GitHub URL through it |
 | `output.py` | `render_skills()` / `render_list()` take optional `name_url(skill)` (link the name, for *Similar skills*), `name_suffix(skill)` (markup after the name, for the star button) and `wrap(skill, block)` (wrap each skill's block, for the filter) callbacks, used only by the web UI, without changing the CLI's plain-text output |
 | `repo.py` | `github_blob_url(repo, commit, path)`: the file's GitHub URL, or `None` for non-GitHub repos |
 | `similarity.py` | `find_similar(target, candidates, threshold)`: see *Similar skills* above |
-| `cli.py` | The `serve` subcommand. `scan_repo()` takes a `warn` callback so the web page can collect warnings instead of printing them |
+| `cli.py` | The `serve` subcommand. `scan_repo()` takes a `warn` callback so the web page can collect warnings instead of printing them. `scan_owner_repos()` scans and stores an owner's repositories in a thread pool and yields the results in name order; the CLI and the web UI share it, and closing it cancels the queue |
 
 ## Testing
 
@@ -286,7 +324,6 @@ row of the *HTTP interface* table, plus:
 - color spans are present (`<span class="bold cyan">`)
 - every page's background is dark green (`--bg: #0f2a1d`, `color-scheme: dark`) with no light-theme override
 - without `allow_local`, `file://`, non-GitHub `git@` and `-`-prefixed input get `400` and nothing is stored
-- an owner URL gets `400` with the CLI hint, with or without `allow_local`, and nothing is stored
 - results are stored in the DB, and not stored with `store=False`
 - catalogue: lists every scanned repository with its skill count, short commit and scan time,
   most recent first; includes a 0-skill repository; links to `/stored`; shows the empty state and the
@@ -301,6 +338,23 @@ row of the *HTTP interface* table, plus:
 - the page `<title>` for home and repository pages; the repository `<input>` is on every page, and
   the filter `<input>` is present (`data-filter`, `hidden`) only when the output lists a skill and
   absent for 0-skill scans/repositories; skill names/descriptions in `data-name`/`data-desc` are escaped
+
+`tests/test_web_org_scan.py` covers *Scanning an organization* with the fake GitHub API and clone
+redirects of `tests/test_org_scan.py` (no network), one test per owner row of the *HTTP interface*
+table, plus:
+- every owner form is scanned, with and without `allow_local`
+- the `<pre>` text, without its `warning:`/`error:` lines, equals `skill-atlas scan <owner> --color never`
+  stdout, and a warning sits right before its repository's block
+- the title, the command in the title bar, the filled-in input, colors, GitHub links, the filter wrappers,
+  and the filter field (also when no skill is found)
+- progress ticks (`0…N`, then `tick--done`) add no text
+- every repository is stored (0-skill ones too) and shows in the catalogue; nothing is stored with
+  `store=False`, and then there are no star buttons
+- star buttons return to each skill's own stored page, and show existing stars
+- a failing repository is an `error:` line and the scan goes on; an empty repository is a warning
+- an unknown owner or an API error gets `502` with the CLI's message and nothing is stored
+- streaming: a repository's block arrives while the next one is still scanning, with no `Content-Length`
+- closing the connection mid-scan stops it: the queued repositories are never scanned
 
 `tests/test_stars.py` covers *Stars* with the same server, one test per `POST /star` row of the
 *HTTP interface* table, plus:
