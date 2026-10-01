@@ -64,14 +64,16 @@ def github_owner_url(url: str) -> str | None:
     return f"https://github.com/{m.group(1)}" if m else None
 
 
-def _api_get(url: str) -> list[dict]:
+def _api_get(url: str, *, not_found: str) -> list[dict]:
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "skill-atlas"}
     if token := os.environ.get("GITHUB_TOKEN"):
         headers["Authorization"] = f"Bearer {token}"
     try:
         with urlopen(Request(url, headers=headers), timeout=30) as resp:
-            return json.load(resp)
+            data = json.load(resp)
     except HTTPError as e:
+        if e.code == 404:
+            raise RepoError(not_found) from e
         try:
             message = json.load(e).get("message", "")
         except (ValueError, AttributeError):
@@ -82,6 +84,9 @@ def _api_get(url: str) -> list[dict]:
         raise RepoError(f"GitHub API: {reason}") from e
     except (URLError, OSError, ValueError) as e:
         raise RepoError(f"GitHub API: {getattr(e, 'reason', e)}") from e
+    if not isinstance(data, list):
+        raise RepoError("GitHub API: unexpected response (not a list of repositories)")
+    return data
 
 
 def list_owner_repos(owner_url: str, *, include_forks: bool = False) -> tuple[list[str], int]:
@@ -99,12 +104,7 @@ def list_owner_repos(owner_url: str, *, include_forks: bool = False) -> tuple[li
             f"{api}/users/{quote(owner)}/repos?type=owner&sort=full_name"
             f"&per_page={PER_PAGE}&page={page}"
         )
-        try:
-            batch = _api_get(url)
-        except RepoError as e:
-            if isinstance(e.__cause__, HTTPError) and e.__cause__.code == 404:
-                raise RepoError(f"GitHub user or organization not found: {owner}") from e
-            raise
+        batch = _api_get(url, not_found=f"GitHub user or organization not found: {owner}")
         entries += batch
         if len(batch) < PER_PAGE:
             break

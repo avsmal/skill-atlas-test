@@ -46,6 +46,7 @@ class FakeGitHub:
         self.requests: list[tuple[str, dict]] = []  # (path?query, headers)
         self.status: int | None = None  # force an error response
         self.message = ""
+        self.body = None  # force a 200 response with this body
 
 
 @pytest.fixture
@@ -61,6 +62,8 @@ def github(tmp_path, monkeypatch):
             segs = parts.path.strip("/").split("/")
             if fake.status:
                 return self._json(fake.status, {"message": fake.message})
+            if fake.body is not None:
+                return self._json(200, fake.body)
             if len(segs) != 3 or segs[0] != "users" or segs[2] != "repos" or segs[1] not in OWNERS:
                 return self._json(404, {"message": "Not Found"})
             per_page, page = int(q["per_page"][0]), int(q["page"][0])
@@ -299,6 +302,13 @@ def test_api_server_error(github, capsys):
     assert err == "error: GitHub API: HTTP 500: Server Error\n"
 
 
+def test_api_unexpected_response(github, capsys):
+    github.body = {"message": "not a list"}
+    code, _, err = run(capsys, "https://github.com/acme", "--no-store")
+    assert code == 1
+    assert err == "error: GitHub API: unexpected response (not a list of repositories)\n"
+
+
 def test_api_unreachable(github, monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("SKILL_ATLAS_GITHUB_API", "http://127.0.0.1:1")
     code, _, err = run(capsys, "https://github.com/acme", "--db", str(tmp_path / "db"))
@@ -338,3 +348,27 @@ def test_jobs_must_be_positive(jobs, capsys):
     with pytest.raises(SystemExit) as exc:
         main(["scan", "https://github.com/acme", "--jobs", jobs])
     assert exc.value.code == 2
+
+
+def test_interrupt_does_not_clone_queued_repositories(github, monkeypatch, tmp_path, capsys):
+    import skill_atlas.cli as cli
+
+    started = []
+    real = cli._scan_collecting
+
+    def scan(repo):
+        started.append(repo)
+        if len(started) == 2:
+            raise KeyboardInterrupt
+        return real(repo)
+
+    monkeypatch.setattr(cli, "_scan_collecting", scan)
+    db = tmp_path / "db"
+    with pytest.raises(KeyboardInterrupt):
+        main(["scan", "https://github.com/acme", "--include-forks", "--jobs", "1", "--db", str(db)])
+    # alpha was scanned and stored, Beta was interrupted; forked and gamma never started
+    # (one more may have been picked up by the worker before the queue was cancelled)
+    assert started[:2] == ["https://github.com/acme/alpha", "https://github.com/acme/Beta"]
+    assert len(started) <= 3
+    with Store(db) as store:
+        assert [e.repo for e in store.repos()] == ["https://github.com/acme/alpha"]

@@ -91,6 +91,8 @@ https://github.com/JetBrains/kotlin @ 848b4009281f
    Unless `--no-store` is given, each repository is saved to the DB as soon as its scan finishes, with the
    same replace semantics as a single scan, so an interrupted run keeps what it has already scanned.
    Repositories with 0 skills are stored too, so they appear in the web catalogue.
+   Interrupting the run (Ctrl-C) stops it: queued repositories are not cloned (clones already running
+   finish first), and the repositories already stored stay in the DB.
 4. **Empty repositories** (no commits) are skipped with `warning: <repo>: skipping: repository is empty`.
    They are not stored and don't count as failures.
 5. **Failures.** A repository that fails to clone doesn't stop the run: `error: <repo>: <git stderr>` is
@@ -328,7 +330,7 @@ never creates duplicates, and skills that were deleted upstream disappear from t
 | The repository has no commits | `error: repository is empty`, exit 1, DB unchanged (with an owner URL: a warning, see *Scanning an organization*) |
 | Malformed `SKILL.md` | `warning: skipping <path>: <reason>` on stderr; the scan continues |
 | Owner URL: the owner doesn't exist | `error: GitHub user or organization not found: <owner>`, exit 1, DB unchanged |
-| Owner URL: the API fails (rate limit, network) | `error: GitHub API: <reason>` (rate limit: plus a hint to set `GITHUB_TOKEN`), exit 1, DB unchanged |
+| Owner URL: the API fails (rate limit, network, a response that isn't a list) | `error: GitHub API: <reason>` (rate limit: plus a hint to set `GITHUB_TOKEN`), exit 1, DB unchanged |
 | Owner URL: some repositories fail to clone | `error: <repo>: <git stderr>` for each; the others are scanned and stored; exit 1 |
 | Owner URL with `--ref` | `error: --ref can't be used with an organization URL`, exit 2, nothing is cloned |
 | Bad CLI arguments | argparse usage message, exit 2 |
@@ -347,7 +349,7 @@ never creates duplicates, and skills that were deleted upstream disappear from t
   every accepted owner form; pagination; forks skipped and `--include-forks`; text output (header,
   0-skill repos omitted, summaries) and `--json`; warnings prefixed with the repo; storage of every repo,
   including 0-skill ones, and `--no-store`; an empty repository (skipped with a warning); a failing repository; an unknown owner; an API error;
-  `GITHUB_TOKEN` sent as a bearer token; `--ref` rejected; `--jobs 1` and the default give the same output
+  an unexpected API response; `GITHUB_TOKEN` sent as a bearer token; `--ref` rejected; an interrupted run doesn't clone the queued repositories; `--jobs 1` and the default give the same output
 
 Edge-case tests (`tests/test_edge_cases.py`) build a fixture repo for each scenario and run the
 full clone → sparse checkout → discovery → parse → dedupe pipeline, so the sparse patterns

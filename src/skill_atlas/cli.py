@@ -107,7 +107,8 @@ def scan_owner(owner: str, args: argparse.Namespace) -> int:
     store = None if args.no_store else Store(args.db)
     try:
         with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-            # map() yields in submission order, so output is in name order whatever finishes first
+            # map() yields in submission order, so output is in name order whatever finishes first;
+            # if the loop is interrupted (Ctrl-C), map() cancels the repositories still queued
             for repo, commit, skills, warnings, err in pool.map(_scan_collecting, repos):
                 for msg in warnings:
                     warn(f"{repo}: {msg}")
