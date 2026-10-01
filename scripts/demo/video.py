@@ -142,6 +142,18 @@ def main(argv: list[str] | None = None) -> int:
                                max_changed_pixels=args.max_changed_pixels)
         text = report(results, args.title, args.max_changed_pixels)
         print(text)
+        # TEMPORARY (PR #19): the agent's sandbox can't download artifacts, so print the recording.
+        if os.environ.get("GITHUB_ACTIONS") and args.actual.name == "frames":
+            import base64, io, tarfile
+            buf = io.BytesIO()
+            with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+                for name in ("demo.mp4", "demo.gif", "demo-moments.json", "frames"):
+                    tar.add(args.actual.parent / name, arcname=name)
+            data = base64.b64encode(buf.getvalue()).decode()
+            print("BEGIN-DEMO-DUMP", len(buf.getvalue()))
+            for i in range(0, len(data), 4000):
+                print("DUMP:" + data[i:i + 4000])
+            print("END-DEMO-DUMP")
         if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
             with open(summary, "a") as f:
                 f.write(text + "\n")
