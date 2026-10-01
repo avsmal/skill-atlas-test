@@ -406,6 +406,5 @@ visible difference fails it. See [demo-video.md](demo-video.md).
 
 - A GitHub API backend (Trees API + raw content) for environments without git.
 - Private repositories via `GITHUB_TOKEN` (for owner URLs it is only used for the repository list).
-- Scanning an organization from the web UI (see [web.md](web.md)).
 - Skipping a rescan when the remote HEAD is unchanged (`git ls-remote` against the stored `commit_sha`).
 - Other skill formats (e.g. `AGENTS.md`, Cursor rules) and extra frontmatter fields (`license`, `allowed-tools`).

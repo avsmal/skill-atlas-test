@@ -5,8 +5,9 @@ import argparse
 import json
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterator
 
 from . import __version__
 from .dedupe import dedupe
@@ -89,6 +90,31 @@ def _scan_collecting(repo: str) -> tuple[str, str | None, list[Skill], list[str]
     return repo, commit, skills, warnings, None
 
 
+def scan_owner_repos(
+    repos: list[str], *, jobs: int, db: Path | None,
+) -> Iterator[tuple[str, str | None, list[Skill], list[str], str | None]]:
+    """Scan ``repos`` up to ``jobs`` at a time; yield ``_scan_collecting()`` results in ``repos`` order.
+
+    Each scanned repository is stored in ``db`` (unless None) before it is yielded. Closing the
+    generator early (the client left, Ctrl-C) cancels the repositories still queued; clones already
+    running finish first.
+    """
+    store = Store(db) if db else None
+    try:
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
+            # map() yields in submission order, so output is in name order whatever finishes first;
+            # closing it (explicitly, so it happens before the pool's shutdown waits) cancels the queue
+            with closing(pool.map(_scan_collecting, repos)) as results:
+                for result in results:
+                    repo, commit, skills, _, err = result
+                    if store and err is None and commit is not None:
+                        store.replace_repo(repo, skills, commit)
+                    yield result
+    finally:
+        if store:
+            store.close()
+
+
 def scan_owner(owner: str, args: argparse.Namespace) -> int:
     """``scan`` for an organization or user URL: scan every repository (see spec/cli.md)."""
     if args.ref:
@@ -104,33 +130,22 @@ def scan_owner(owner: str, args: argparse.Namespace) -> int:
         print(render_owner_header(owner, len(repos), forks, paint), flush=True)
     found: list[Skill] = []
     with_skills = failed = 0
-    store = None if args.no_store else Store(args.db)
-    try:
-        with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-            # map() yields in submission order, so output is in name order whatever finishes first;
-            # if the loop is interrupted (Ctrl-C), map() cancels the repositories still queued
-            for repo, commit, skills, warnings, err in pool.map(_scan_collecting, repos):
-                for msg in warnings:
-                    warn(f"{repo}: {msg}")
-                if err is not None:
-                    error(f"{repo}: {err}")
-                    failed += 1
-                    continue
-                if commit is None:  # empty repository
-                    continue
-                if store:
-                    store.replace_repo(repo, skills, commit)
-                if not skills:
-                    continue
-                with_skills += 1
-                found += skills
-                if not args.json:
-                    print()
-                    print_scan(repo, commit, skills, paint)
-                    sys.stdout.flush()
-    finally:
-        if store:
-            store.close()
+    with closing(scan_owner_repos(repos, jobs=args.jobs, db=None if args.no_store else args.db)) as results:
+        for repo, commit, skills, warnings, err in results:
+            for msg in warnings:
+                warn(f"{repo}: {msg}")
+            if err is not None:
+                error(f"{repo}: {err}")
+                failed += 1
+                continue
+            if not skills:  # 0 skills, or an empty repository (commit is None)
+                continue
+            with_skills += 1
+            found += skills
+            if not args.json:
+                print()
+                print_scan(repo, commit, skills, paint)
+                sys.stdout.flush()
     if args.json:
         print_json(found)
     else:
