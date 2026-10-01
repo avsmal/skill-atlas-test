@@ -32,8 +32,8 @@
   are reachable. pytest, pluggy, iniconfig, packaging, pygments and pure-Python PyYAML were cloned from
   GitHub onto `PYTHONPATH` (pytest/pluggy/iniconfig need a hand-written `_version.py`). Pillow couldn't be
   made to work from Ubuntu pool debs (library version mismatch), so `tests/test_demo_video.py` ran only in CI.
-- No browser in the sandbox: the page JS was checked with `node --check` plus a stubbed-DOM run, and the
-  visuals through the CI `demo-video` frames.
+- No browser in the sandbox: the page JS was checked with `node --check` plus a stubbed-DOM run. The
+  rendered buttons were never seen by the agent (see the next point), so check them in the new frames.
 - The first CI run (36838238671) passed `pytest` on both OSes. `demo-video` failed on exactly the 5 frames
   that film the new star buttons (`02`, `03`, `04`, `06`, `07`); `01`, `05` and `08` were pixel-identical.
   The baseline couldn't be replaced from the sandbox: `gh run download` fetches from
