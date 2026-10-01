@@ -9,6 +9,7 @@ A CLI that lists a GitHub repository's own agent skills (`SKILL.md` files under
 pip install -e .
 skill-atlas scan https://github.com/JetBrains/kotlin
 skill-atlas scan JetBrains/kotlin --json
+skill-atlas scan https://github.com/JetBrains   # every repository of an organization or user
 skill-atlas list --color never   # auto | always | never
 skill-atlas serve                # web UI on http://127.0.0.1:8000/ (scan + catalogue of the DB)
 ```

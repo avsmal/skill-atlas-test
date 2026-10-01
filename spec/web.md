@@ -39,6 +39,7 @@ The server uses only the Python standard library (`http.server`, threaded); no n
 | `GET /?repo=` (empty or whitespace) | Same as `GET /`. `200` |
 | `GET /?repo=<repo>` | Scans `<repo>` and returns the page with the input filled in and the output below it. `200` |
 | `GET /?repo=<repo>` where the URL is not allowed | Page with `error: only https:// repository URLs are accepted`. `400`, nothing is cloned |
+| `GET /?repo=<owner URL>` (an organization or user, see *Scanning an organization* in [cli.md](cli.md)) | Page with `error: organizations can only be scanned from the CLI: skill-atlas scan <owner URL>`. `400`, nothing is cloned |
 | `GET /?repo=<repo>` where the clone fails | Page with `error: <git stderr>`. `502`, DB unchanged |
 | `GET /stored?repo=<repo>` | The stored skills of `<repo>`, read from the DB (no clone). `200` |
 | `GET /stored?repo=<repo>` for a repo not in the DB, or with no `repo` | Page saying it isn't in the catalogue, with a *Scan it* link. `404` |
@@ -202,6 +203,8 @@ The server clones whatever URL a visitor types, so by default only URLs that nor
 `https://…` are accepted. This rules out `file://` (reading the server's own disk), `ssh`/`git@`
 URLs other than GitHub's, which normalize to `https://` (using the server's SSH keys), `ext::` transports, and arguments starting with `-` that git
 would read as options. `--allow-local` lifts the restriction and is meant for local use and tests.
+Owner URLs are refused even with `--allow-local`: one request would clone every repository of an
+organization (hundreds, for large ones) inside a single page load.
 The default bind address is `127.0.0.1`.
 
 ## Components
@@ -237,6 +240,7 @@ row of the *HTTP interface* table, plus:
 - color spans are present (`<span class="bold cyan">`)
 - every page's background is dark green (`--bg: #0f2a1d`, `color-scheme: dark`) with no light-theme override
 - without `allow_local`, `file://`, non-GitHub `git@` and `-`-prefixed input get `400` and nothing is stored
+- an owner URL gets `400` with the CLI hint, with or without `allow_local`, and nothing is stored
 - results are stored in the DB, and not stored with `store=False`
 - catalogue: lists every scanned repository with its skill count, short commit and scan time,
   most recent first; includes a 0-skill repository; links to `/stored`; shows the empty state and the

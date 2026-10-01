@@ -88,3 +88,15 @@ def test_duplicated_skill_shows_all_paths(tmp_path, capsys):
     ) in capsys.readouterr().out
     assert main(["list", "--json", "--db", db]) == 0
     assert json.loads(capsys.readouterr().out)[0]["duplicates"] == [".claude/skills/pdf/SKILL.md"]
+
+
+def test_scan_empty_repo(tmp_path, capsys):
+    import subprocess
+
+    repo = tmp_path / "empty"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    db = tmp_path / "db"
+    assert main(["scan", repo.as_uri(), "--db", str(db)]) == 1
+    assert capsys.readouterr().err == "error: repository is empty\n"
+    assert not db.exists()

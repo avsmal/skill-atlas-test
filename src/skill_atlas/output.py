@@ -135,6 +135,26 @@ def render_summary(count: int, paint: Painter) -> str:
     return paint(f"{count} skill(s) found", "bold", "green")
 
 
+def _plural(n: int, one: str, many: str) -> str:
+    return f"{n} {one if n == 1 else many}"
+
+
+def render_owner_header(owner: str, repos: int, forks: int, paint: Painter) -> str:
+    """``https://github.com/<owner>: N repositories (K forks skipped)`` for an organization scan."""
+    line = f"{paint(owner, 'bold', 'blue')}: {_plural(repos, 'repository', 'repositories')}"
+    if forks:
+        line += paint(f" ({_plural(forks, 'fork', 'forks')} skipped)", "dim")
+    return line
+
+
+def render_owner_summary(skills: int, with_skills: int, repos: int, failed: int, paint: Painter) -> str:
+    total = _plural(repos, "repository", "repositories")
+    tail = f" ({failed} failed)" if failed else ""
+    if skills == 0:
+        return paint(f"No skills found in {total}{tail}", "yellow")
+    return paint(f"{skills} skill(s) found in {with_skills} of {total}{tail}", "bold", "green")
+
+
 def warn(msg: str, stream: TextIO | None = None) -> None:
     stream = stream or sys.stderr
     paint = Painter(use_color("auto", stream))
