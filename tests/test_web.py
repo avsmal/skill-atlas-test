@@ -139,6 +139,17 @@ def test_non_https_rejected_by_default(serve, tmp_path, fixture_repo, repo):
     assert not (tmp_path / "web.db").exists()
 
 
+@pytest.mark.parametrize("allow_local", [False, True])
+@pytest.mark.parametrize("repo", ["https://github.com/acme", "github.com/acme/", "https://github.com/orgs/acme"])
+def test_owner_url_rejected(serve, tmp_path, repo, allow_local):
+    status, body = serve(allow_local=allow_local)(scan_url(repo))
+    assert status == 400
+    assert output_text(body) == (
+        "error: organizations can only be scanned from the CLI: skill-atlas scan https://github.com/acme"
+    )
+    assert not (tmp_path / "web.db").exists()
+
+
 def test_local_repo_rejected_by_default(serve, tmp_path, fixture_repo):
     status, _ = serve(allow_local=False)(scan_url(fixture_repo.as_uri()))
     assert status == 400

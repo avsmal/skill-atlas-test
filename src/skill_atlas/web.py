@@ -20,7 +20,7 @@ from urllib.parse import parse_qs, quote, urlsplit
 
 from .models import RepoEntry, Skill
 from .output import Painter, render_header, render_list, render_skills, render_summary
-from .repo import RepoError, github_slug, normalize_repo_url
+from .repo import RepoError, github_owner_url, github_slug, normalize_repo_url
 from .similarity import DEFAULT_THRESHOLD, find_similar
 from .store import Store
 
@@ -72,6 +72,9 @@ def run_scan(
         lines.append(f"{paint('error:', 'bold', 'red')} {paint(msg)}")
         return "\n".join(lines), 0
 
+    if owner := github_owner_url(repo_input):
+        text, count = error(f"organizations can only be scanned from the CLI: skill-atlas scan {owner}")
+        return HTTPStatus.BAD_REQUEST, text, count
     if not allow_local and not normalize_repo_url(repo_input).startswith("https://"):
         text, count = error(NOT_ALLOWED)
         return HTTPStatus.BAD_REQUEST, text, count

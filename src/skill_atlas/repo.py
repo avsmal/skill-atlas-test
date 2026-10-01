@@ -1,6 +1,7 @@
 """Repository URL handling and shallow cloning."""
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -9,10 +10,15 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
+from urllib.error import HTTPError, URLError
 from urllib.parse import quote
+from urllib.request import Request, urlopen
 
 _GITHUB_REPO = re.compile(r"^https://github\.com/([\w.-]+/[\w.-]+)$")
 _SHORTHAND = re.compile(r"^[\w.-]+/[\w.-]+$")
+_GITHUB_OWNER = re.compile(r"^(?:https?://)?(?:www\.)?github\.com/(?:orgs/)?([\w.-]+)$")
+# GitHub REST API page size (its maximum); a shorter page is the last one.
+PER_PAGE = 100
 # gitignore-style patterns (non-cone sparse checkout) for rule (a) in spec/cli.md:
 # <prefix>/.agents|.claude/skills/<skill-dir>/SKILL.md, file name in any case.
 _SKILL_FILE_GLOB = "[Ss][Kk][Ii][Ll][Ll].[Mm][Dd]"
@@ -23,6 +29,10 @@ _NO_LFS = ["-c", "filter.lfs.smudge=", "-c", "filter.lfs.process=", "-c", "filte
 
 class RepoError(Exception):
     pass
+
+
+class EmptyRepoError(RepoError):
+    """The repository has no commits."""
 
 
 def normalize_repo_url(url: str) -> str:
@@ -42,6 +52,70 @@ def normalize_repo_url(url: str) -> str:
     if m:
         return f"https://github.com/{m.group(1)}/{m.group(2)}"
     return url
+
+
+def github_owner_url(url: str) -> str | None:
+    """``https://github.com/<owner>`` if ``url`` names a GitHub organization or user, else None.
+
+    Accepts ``https://github.com/<owner>``, ``github.com/<owner>`` and
+    ``https://github.com/orgs/<owner>``. Repository forms (``owner/name``, …) return None.
+    """
+    m = _GITHUB_OWNER.match(url.strip().rstrip("/"))
+    return f"https://github.com/{m.group(1)}" if m else None
+
+
+def _api_get(url: str, *, not_found: str) -> list[dict]:
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "skill-atlas"}
+    if token := os.environ.get("GITHUB_TOKEN"):
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        with urlopen(Request(url, headers=headers), timeout=30) as resp:
+            data = json.load(resp)
+    except HTTPError as e:
+        if e.code == 404:
+            raise RepoError(not_found) from e
+        try:
+            message = json.load(e).get("message", "")
+        except (ValueError, AttributeError):
+            message = ""
+        reason = f"HTTP {e.code}" + (f": {message}" if message else "")
+        if e.code in (403, 429) and "rate limit" in message.lower():
+            reason += " (set GITHUB_TOKEN to raise the limit)"
+        raise RepoError(f"GitHub API: {reason}") from e
+    except (URLError, OSError, ValueError) as e:
+        raise RepoError(f"GitHub API: {getattr(e, 'reason', e)}") from e
+    if not isinstance(data, list):
+        raise RepoError("GitHub API: unexpected response (not a list of repositories)")
+    return data
+
+
+def list_owner_repos(owner_url: str, *, include_forks: bool = False) -> tuple[list[str], int]:
+    """Public repositories of a GitHub owner, as normalized URLs sorted by name, and the number of skipped forks.
+
+    ``owner_url`` is a :func:`github_owner_url` result. Raises :class:`RepoError` if the owner
+    doesn't exist or the API fails.
+    """
+    owner = owner_url.rsplit("/", 1)[1]
+    api = os.environ.get("SKILL_ATLAS_GITHUB_API", "https://api.github.com").rstrip("/")
+    entries: list[dict] = []
+    page = 1
+    while True:
+        url = (
+            f"{api}/users/{quote(owner)}/repos?type=owner&sort=full_name"
+            f"&per_page={PER_PAGE}&page={page}"
+        )
+        batch = _api_get(url, not_found=f"GitHub user or organization not found: {owner}")
+        entries += batch
+        if len(batch) < PER_PAGE:
+            break
+        page += 1
+    forks = sum(1 for r in entries if r.get("fork"))
+    if include_forks:
+        forks = 0
+    else:
+        entries = [r for r in entries if not r.get("fork")]
+    names = sorted({r["full_name"] for r in entries}, key=lambda n: (n.lower(), n))
+    return [f"https://github.com/{name}" for name in names], forks
 
 
 def github_slug(repo: str) -> str | None:
@@ -88,6 +162,10 @@ def clone(url: str, ref: str | None = None) -> Iterator[tuple[Path, str]]:
         if ref:
             args += ["--branch", ref]
         _git(*args, url, str(dest))
+        try:
+            _git("rev-parse", "--verify", "--quiet", "HEAD", cwd=dest)
+        except RepoError:
+            raise EmptyRepoError("repository is empty") from None
         _git("sparse-checkout", "set", "--no-cone", *SPARSE_PATTERNS, cwd=dest)
         _git("checkout", "--quiet", cwd=dest)
         commit = _git("rev-parse", "HEAD", cwd=dest)
