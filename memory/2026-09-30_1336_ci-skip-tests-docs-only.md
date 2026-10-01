@@ -19,6 +19,4 @@
 - `spec/cli.md` → Continuous integration updated.
 
 ## Context
-- `gh`'s HTTPS token lacks the `workflow` scope, so pushes that change `.github/workflows/` are
-  rejected over HTTPS; push those over SSH (`git@github.com:avsmal/skill-atlas-test.git`).
 - `main` has no branch protection (no required checks), checked via the GitHub API.
